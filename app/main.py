@@ -4,14 +4,28 @@ from fastapi import Depends, FastAPI
 from sqlalchemy.orm import Session, sessionmaker
 from typing import List
 from app.database import get_db
-from app.models import SenatorTransactionModel
+from app.models import SenatorTransactionModel, AllSenateTransactionModel, AllHouseTransactionModel, TickerTransactionModel
 from app.models import Base
 from app.database import engine
 import re
-
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import desc, func
+import datetime
 
 app = FastAPI()
 
+origins = [
+    "http://localhost",
+    "http://localhost:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Create a SQLite database
 Base.metadata.create_all(bind=engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -26,6 +40,14 @@ async def startup_event():
     for senator in data:
         for transaction in senator['transactions']:
             if 'scanned_pdf' not in transaction:
+                # Check if transaction already exists in the database
+                existing_transaction = session.query(SenatorTransactionModel).filter_by(
+                    owner=transaction['owner'],
+                    transaction_date=transaction['transaction_date'],
+                    ticker=transaction['ticker']
+                ).first()
+                if existing_transaction is not None:
+                    continue  # Skip this transaction if it already exists
                 session.add(SenatorTransactionModel(
                     first_name=senator['first_name'],
                     last_name=senator['last_name'],
@@ -47,11 +69,11 @@ async def startup_event():
                 ))
     session.commit()
 
-    # Insert ticker transactions into the database
-    response = requests.get('https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_ticker_transactions.json')
-    data = json.loads(response.text)
+    # Insert new ticker transactions into the database
+    ticker_response = requests.get('https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_ticker_transactions.json')
+    tdata = json.loads(ticker_response.text)
 
-    for ticker_data in data:
+    for ticker_data in tdata:
         ticker_transactions = ticker_data['transactions']
         for transaction in ticker_transactions:
             ticker_match = re.search(r'>(\w+)<', transaction['ticker'])
@@ -59,8 +81,15 @@ async def startup_event():
                 ticker = ticker_match.group(1)
             else:
                 ticker = None
-
-            session.add(SenatorTransactionModel(
+            # Check if transaction already exists in the database
+            existing_transaction = session.query(TickerTransactionModel).filter_by(
+                owner=transaction['owner'],
+                transaction_date=transaction['transaction_date'],
+                ticker=ticker
+            ).first()
+            if existing_transaction is not None:
+                continue  # Skip this transaction if it already exists
+            session.add(TickerTransactionModel(
                 first_name=transaction['senator'].split()[0],
                 last_name=" ".join(transaction['senator'].split()[1:]),
                 office=None,
@@ -81,6 +110,94 @@ async def startup_event():
             ))
     session.commit()
     
+    senate_url = 'https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions.json'
+    senate_response = requests.get(senate_url)
+    senate_data = json.loads(senate_response.text)
+    senate_sorted_transactions = sorted(senate_data, key=lambda x: datetime.datetime.strptime(x['transaction_date'], '%m/%d/%Y'), reverse=True)
+
+    session = SessionLocal()
+
+    for transaction in senate_sorted_transactions:
+        if 'scanned_pdf' not in transaction:
+            if session.query(AllSenateTransactionModel).filter_by(
+                    senator=transaction['senator'],
+                    ptr_link=transaction['ptr_link'],
+                    transaction_date=transaction['transaction_date'],
+                    owner=transaction['owner'],
+                    ticker=transaction['ticker'],
+                    asset_description=transaction['asset_description'],
+                    asset_type=transaction['asset_type'],
+                    transaction_type=transaction['type'],
+                    amount=transaction['amount'],
+                    comment=transaction.get('comment'),
+                    party=transaction.get('party'),
+                    state=transaction.get('state'),
+                    industry=transaction.get('industry'),
+                    sector=transaction.get('sector')
+                ).count() == 0:
+                session.add(AllSenateTransactionModel(
+                    senator=transaction['senator'],
+                    ptr_link=transaction['ptr_link'],
+                    transaction_date=transaction['transaction_date'],
+                    owner=transaction['owner'],
+                    ticker=transaction['ticker'],
+                    asset_description=transaction['asset_description'],
+                    asset_type=transaction['asset_type'],
+                    transaction_type=transaction['type'],
+                    amount=transaction['amount'],
+                    comment=transaction.get('comment'),
+                    party=transaction.get('party'),
+                    state=transaction.get('state'),
+                    industry=transaction.get('industry'),
+                    sector=transaction.get('sector')
+                ))
+    session.commit()
+
+        
+    house_url = 'https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json'
+    house_response = requests.get(house_url)
+    house_data = json.loads(house_response.text)
+    house_sorted_transactions = []
+    type_map = {'sale_partial': 'Sale (Partial)', 'sale_full': 'Sale (Full)', 'purchase': 'Purchase', 'exchange': 'Exchange'}
+
+    with SessionLocal() as session:
+        for transaction in house_data:
+            try:
+                transaction_date = datetime.datetime.strptime(transaction['transaction_date'], '%Y-%m-%d')
+                transaction_type = transaction['type']
+                if transaction_type in type_map:
+                    transaction_type = type_map[transaction_type]
+                else:
+                    print(f"Warning: Unknown transaction type {transaction_type}. Saving as-is.")
+                transaction['transaction_date'] = transaction_date.strftime('%m/%d/%Y')
+                transaction['transaction_type'] = transaction_type
+                house_sorted_transactions.append(transaction)
+            except ValueError:
+                print(f"Error: Invalid transaction date format: {transaction['transaction_date']}. Skipping transaction.")
+                continue
+
+        for transaction in house_sorted_transactions:
+            if 'scanned_pdf' not in transaction:
+                # Check if a record with the same transaction date and ticker already exists in the database
+                existing_record = session.query(AllHouseTransactionModel).filter_by(transaction_date=transaction['transaction_date'], ticker=transaction['ticker']).first()
+                if existing_record:
+                    continue # Skip this transaction if it already exists in the database
+                session.add(AllHouseTransactionModel(
+                    transaction_date=transaction['transaction_date'],
+                    representative=transaction['representative'],
+                    owner=transaction['owner'],
+                    ticker=transaction['ticker'],
+                    asset_description=transaction['asset_description'],
+                    district=transaction['district'],
+                    transaction_type=transaction['transaction_type'],
+                    amount=transaction['amount'],
+                    party=transaction['party'],
+                    state=transaction['state'],
+                    industry=transaction['industry'],
+                    sector=transaction['sector']
+                ))
+        session.commit()
+        
 
 
 
@@ -160,18 +277,54 @@ def get_transactions(first_name: str, last_name: str, db: Session):
                 transaction.ticker = ticker_match.group(1)
     return [transaction.__dict__ for transaction in transactions]
 
-def fetch_senator_stock_transactions(first_name: str, last_name: str):
-    with SessionLocal() as session:
-        transactions = get_transactions(first_name, last_name, session)
-    return transactions
-
-
-@app.get('/transactions/all')
-def get_all_transactions(limit: int = 100, db: Session = Depends(get_db)):
-    transactions = db.query(SenatorTransactionModel).limit(limit).all()
+@app.get('/transactions/senate/all')
+def get_all_senate_transactions(db: Session = Depends(get_db)):
+    transactions = db.query(AllSenateTransactionModel).all()
     for transaction in transactions:
         if transaction.ticker is not None:
             ticker_match = re.search(r'>(\w+)<', transaction.ticker)
             if ticker_match:
                 transaction.ticker = ticker_match.group(1)
-    return [SenatorTransactionModel(**{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}) for transaction in transactions]
+    return [transaction.__dict__ for transaction in transactions]
+
+def fetch_senator_stock_transactions(first_name: str, last_name: str):
+    with SessionLocal() as session:
+        transactions = get_transactions(first_name, last_name, session)
+    return transactions
+
+@app.get('/transactions/house/all')
+def get_all_house_transactions(db: Session = Depends(get_db)):
+    transactions = (
+        db.query(AllHouseTransactionModel)
+        .order_by(AllHouseTransactionModel.transaction_date.desc())
+        .all()
+    )
+    
+    for transaction in transactions:
+        if transaction.ticker is not None:
+            ticker_match = re.search(r'>(\w+)<', transaction.ticker)
+            if ticker_match:
+                transaction.ticker = ticker_match.group(1)
+        transaction.transaction_date = datetime.datetime.strptime(transaction.transaction_date, '%m/%d/%Y').strftime('%m/%d/%Y')
+    return [transaction.__dict__ for transaction in transactions]
+
+@app.get('/transactions/senate/{ticker}')
+def get_senate_transactions_by_ticker(ticker: str, db: Session = Depends(get_db)):
+    transactions = db.query(AllSenateTransactionModel).filter_by(ticker=ticker.upper()).all()
+    for transaction in transactions:
+        if transaction.ticker is not None:
+            ticker_match = re.search(r'>(\w+)<', transaction.ticker)
+            if ticker_match:
+                transaction.ticker = ticker_match.group(1)
+    return [transaction.__dict__ for transaction in transactions]
+
+@app.get('/transactions/house/{ticker}')
+def get_house_transactions_by_ticker(ticker: str, db: Session = Depends(get_db)):
+    transactions = db.query(AllHouseTransactionModel).filter_by(ticker=ticker.upper()).all()
+    for transaction in transactions:
+        if transaction.ticker is not None:
+            ticker_match = re.search(r'>(\w+)<', transaction.ticker)
+            if ticker_match:
+                transaction.ticker = ticker_match.group(1)
+        transaction.transaction_date = datetime.datetime.strptime(transaction.transaction_date, '%m/%d/%Y').strftime('%m/%d/%Y')
+    return [transaction.__dict__ for transaction in transactions]
