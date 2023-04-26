@@ -201,7 +201,7 @@ async def startup_event():
 
 
 
-
+#? Done
 # Define a GET endpoint that returns all the transactions for a given senator
 @app.get('/transactions/senate/{first_name}-{last_name}')
 def get_transactions(first_name: str, last_name: str, db: Session = Depends(get_db)):
@@ -213,29 +213,31 @@ def get_transactions(first_name: str, last_name: str, db: Session = Depends(get_
                 transaction.ticker = ticker_match.group(1)
     return [SenatorTransactionModel(**{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}) for transaction in transactions]
 
-@app.get('/transactions/ticker/{ticker}')
+#? DONE
+@app.get('/transactions/senate/ticker/{ticker}')
 def get_transactions_by_ticker(ticker: str, db: Session = Depends(get_db)):
-    transactions = db.query(SenatorTransactionModel).filter_by(ticker=ticker).all()
+    transactions = db.query(AllSenateTransactionModel).filter_by(ticker=ticker).all()
     return [
-        SenatorTransactionModel(
+        AllSenateTransactionModel(
             **{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}
         )
         for transaction in transactions
     ]
 
+#?
 #! Party endpoint
-@app.get('/transactions/party/{party}')
+@app.get('/transactions/house/party/{party}')
 def get_transactions_by_party(party: str, db: Session = Depends(get_db)):
-    transactions = db.query(SenatorTransactionModel).filter_by(party=party).all()
+    transactions = db.query(AllHouseTransactionModel).filter_by(party=party).all()
     return [
-        SenatorTransactionModel(
+        AllHouseTransactionModel(
             **{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}
         )
         for transaction in transactions
     ]
 
 #! State endpoint  
-@app.get('/transactions/state/{state}')
+@app.get('/transactions/house/state/{state}')
 def get_transactions_by_state(state: str, db: Session = Depends(get_db)):
     transactions = db.query(SenatorTransactionModel).filter_by(state=state).all()
     return [
@@ -246,7 +248,7 @@ def get_transactions_by_state(state: str, db: Session = Depends(get_db)):
     ]
 
 #! Industry endpoint
-@app.get('/transactions/party/{party}')
+@app.get('/transactions/senate/party/{party}')
 def get_transactions_by_party(party: str, db: Session = Depends(get_db)):
     transactions = db.query(SenatorTransactionModel).filter_by(party=party).all()
     return [
@@ -257,7 +259,7 @@ def get_transactions_by_party(party: str, db: Session = Depends(get_db)):
     ]
     
 #! Sector endpoint
-@app.get('/transactions/sector/{sector}')
+@app.get('/transactions/senate/sector/{sector}')
 def get_transactions_by_sector(sector: str, db: Session = Depends(get_db)):
     transactions = db.query(SenatorTransactionModel).filter_by(sector=sector).all()
     return [
@@ -277,6 +279,7 @@ def get_transactions(first_name: str, last_name: str, db: Session):
                 transaction.ticker = ticker_match.group(1)
     return [transaction.__dict__ for transaction in transactions]
 
+#? done
 @app.get('/transactions/senate/all')
 def get_all_senate_transactions(db: Session = Depends(get_db)):
     transactions = db.query(AllSenateTransactionModel).all()
@@ -286,12 +289,12 @@ def get_all_senate_transactions(db: Session = Depends(get_db)):
             if ticker_match:
                 transaction.ticker = ticker_match.group(1)
     return [transaction.__dict__ for transaction in transactions]
-
+#? done
 def fetch_senator_stock_transactions(first_name: str, last_name: str):
     with SessionLocal() as session:
         transactions = get_transactions(first_name, last_name, session)
     return transactions
-
+#? Done
 @app.get('/transactions/house/all')
 def get_all_house_transactions(db: Session = Depends(get_db)):
     transactions = (
@@ -307,8 +310,8 @@ def get_all_house_transactions(db: Session = Depends(get_db)):
                 transaction.ticker = ticker_match.group(1)
         transaction.transaction_date = datetime.datetime.strptime(transaction.transaction_date, '%m/%d/%Y').strftime('%m/%d/%Y')
     return [transaction.__dict__ for transaction in transactions]
-
-@app.get('/transactions/senate/{ticker}')
+#? done
+@app.get('/transactions/senate/ticker/{ticker}')
 def get_senate_transactions_by_ticker(ticker: str, db: Session = Depends(get_db)):
     transactions = db.query(AllSenateTransactionModel).filter_by(ticker=ticker.upper()).all()
     for transaction in transactions:
@@ -317,8 +320,8 @@ def get_senate_transactions_by_ticker(ticker: str, db: Session = Depends(get_db)
             if ticker_match:
                 transaction.ticker = ticker_match.group(1)
     return [transaction.__dict__ for transaction in transactions]
-
-@app.get('/transactions/house/{ticker}')
+#? done
+@app.get('/transactions/house/ticker/{ticker}')
 def get_house_transactions_by_ticker(ticker: str, db: Session = Depends(get_db)):
     transactions = db.query(AllHouseTransactionModel).filter_by(ticker=ticker.upper()).all()
     for transaction in transactions:
@@ -328,3 +331,5 @@ def get_house_transactions_by_ticker(ticker: str, db: Session = Depends(get_db))
                 transaction.ticker = ticker_match.group(1)
         transaction.transaction_date = datetime.datetime.strptime(transaction.transaction_date, '%m/%d/%Y').strftime('%m/%d/%Y')
     return [transaction.__dict__ for transaction in transactions]
+
+#uvicorn app.main:app --reload
