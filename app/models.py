@@ -1,8 +1,10 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from datetime import datetime
+from sqlalchemy import Column, DateTime, Integer, String, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 import re
 
 Base = declarative_base()
+
 
 class SenatorTransactionModel(Base):
     __tablename__ = 'senator_transactions'
@@ -32,17 +34,21 @@ class SenatorTransactionModel(Base):
     def __init__(self, **kwargs):
         if kwargs.get('asset_type') == 'Stock Option':
             asset_description = kwargs.get('asset_description')
-            option_type_match = re.search(r'Option Type: (\w+)', asset_description)
+            option_type_match = re.search(
+                r'Option Type: (\w+)', asset_description)
             if option_type_match:
                 kwargs['option_type'] = option_type_match.group(1)
-            strike_price_match = re.search(r'Strike price:</em> (\d+\.\d+)', asset_description)
+            strike_price_match = re.search(
+                r'Strike price:</em> (\d+\.\d+)', asset_description)
             if strike_price_match:
                 kwargs['strike_price'] = strike_price_match.group(1)
-            expiration_date_match = re.search(r'Expires:</em> (\d{2}/\d{2}/\d{4})', asset_description)
+            expiration_date_match = re.search(
+                r'Expires:</em> (\d{2}/\d{2}/\d{4})', asset_description)
             if expiration_date_match:
                 kwargs['expiration_date'] = expiration_date_match.group(1)
         super().__init__(**kwargs)
-        
+
+
 class AllSenateTransactionModel(Base):
     __tablename__ = 'all_senate_transactions'
 
@@ -50,6 +56,7 @@ class AllSenateTransactionModel(Base):
     senator = Column(String)
     ptr_link = Column(String)
     transaction_date = Column(String)
+    disclosure_date = Column(String)
     owner = Column(String)
     ticker = Column(String)
     asset_description = Column(String)
@@ -64,21 +71,29 @@ class AllSenateTransactionModel(Base):
     option_type = Column(String)
     strike_price = Column(String)
     expiration_date = Column(String)
+    transaction_date_dt = Column(DateTime, index=True)
+    disclosure_date_dt = Column(DateTime, index=True)
+    disclosure_delay = Column(Integer)
+
 
     def __init__(self, **kwargs):
-        # Concatenate the first_name and last_name columns to create the politician column        
+        # Concatenate the first_name and last_name columns to create the politician column
         if kwargs.get('asset_type') == 'Stock Option':
             asset_description = kwargs.get('asset_description')
-            option_type_match = re.search(r'Option Type: (\w+)', asset_description)
+            option_type_match = re.search(
+                r'Option Type: (\w+)', asset_description)
             if option_type_match:
                 kwargs['option_type'] = option_type_match.group(1)
-            strike_price_match = re.search(r'Strike price:</em> (\d+\.\d+)', asset_description)
+            strike_price_match = re.search(
+                r'Strike price:</em> (\d+\.\d+)', asset_description)
             if strike_price_match:
                 kwargs['strike_price'] = strike_price_match.group(1)
-            expiration_date_match = re.search(r'Expires:</em> (\d{2}/\d{2}/\d{4})', asset_description)
+            expiration_date_match = re.search(
+                r'Expires:</em> (\d{2}/\d{2}/\d{4})', asset_description)
             if expiration_date_match:
                 kwargs['expiration_date'] = expiration_date_match.group(1)
         super().__init__(**kwargs)
+
 
 class AllHouseTransactionModel(Base):
     __tablename__ = 'all_house_transactions'
@@ -101,17 +116,26 @@ class AllHouseTransactionModel(Base):
     option_type = Column(String)
     strike_price = Column(String)
     expiration_date = Column(String)
+    disclosure_date = Column(String)
+    transaction_date_dt = Column(DateTime, index=True)
+    disclosure_date_dt = Column(DateTime, index=True)
+    disclosure_delay = Column(Integer)
+
+
 
     def __init__(self, **kwargs):
         if kwargs.get('asset_type') == 'Stock Option':
             asset_description = kwargs.get('asset_description')
-            option_type_match = re.search(r'Option Type: (\w+)', asset_description)
+            option_type_match = re.search(
+                r'Option Type: (\w+)', asset_description)
             if option_type_match:
                 kwargs['option_type'] = option_type_match.group(1)
-            strike_price_match = re.search(r'Strike price:</em> (\d+\.\d+)', asset_description)
+            strike_price_match = re.search(
+                r'Strike price:</em> (\d+\.\d+)', asset_description)
             if strike_price_match:
                 kwargs['strike_price'] = strike_price_match.group(1)
-            expiration_date_match = re.search(r'Expires:</em> (\d{2}/\d{2}/\d{4})', asset_description)
+            expiration_date_match = re.search(
+                r'Expires:</em> (\d{2}/\d{2}/\d{4})', asset_description)
             if expiration_date_match:
                 kwargs['expiration_date'] = expiration_date_match.group(1)
         super().__init__(**kwargs)
@@ -145,13 +169,38 @@ class TickerTransactionModel(Base):
     def __init__(self, **kwargs):
         if kwargs.get('asset_type') == 'Stock Option':
             asset_description = kwargs.get('asset_description')
-            option_type_match = re.search(r'Option Type: (\w+)', asset_description)
+            option_type_match = re.search(
+                r'Option Type: (\w+)', asset_description)
             if option_type_match:
                 kwargs['option_type'] = option_type_match.group(1)
-            strike_price_match = re.search(r'Strike price:</em> (\d+\.\d+)', asset_description)
+            strike_price_match = re.search(
+                r'Strike price:</em> (\d+\.\d+)', asset_description)
             if strike_price_match:
                 kwargs['strike_price'] = strike_price_match.group(1)
-            expiration_date_match = re.search(r'Expires:</em> (\d{2}/\d{2}/\d{4})', asset_description)
+            expiration_date_match = re.search(
+                r'Expires:</em> (\d{2}/\d{2}/\d{4})', asset_description)
             if expiration_date_match:
                 kwargs['expiration_date'] = expiration_date_match.group(1)
         super().__init__(**kwargs)
+
+class TopRepresentativeModel(Base):
+    __tablename__ = 'top_representatives'
+    
+    id = Column(Integer, primary_key=True)
+    representative = Column(String)
+    trade_frequency = Column(Integer)
+    last_updated = Column(DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<TopRepresentativeModel(representative={self.representative}, trade_frequency={self.trade_frequency})>"
+    
+class TopSenatorModel(Base):
+    __tablename__ = 'top_senator'
+
+    id = Column(Integer, primary_key=True)
+    senator = Column(String)
+    trade_frequency = Column(Integer)
+    last_updated = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<TopSenatorModel(senator={self.senator}, trade_frequency={self.trade_frequency})>"
