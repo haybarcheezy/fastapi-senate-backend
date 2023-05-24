@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey
+from sqlalchemy import Column, DateTime, Integer, String, Float
 from sqlalchemy.ext.declarative import declarative_base
 import re
 
@@ -54,6 +54,9 @@ class AllSenateTransactionModel(Base):
 
     id = Column(Integer, primary_key=True)
     senator = Column(String)
+    bio_id = Column(String)
+    first_name = Column(String)
+    last_name = Column(String)
     ptr_link = Column(String)
     transaction_date = Column(String)
     disclosure_date = Column(String)
@@ -74,6 +77,9 @@ class AllSenateTransactionModel(Base):
     transaction_date_dt = Column(DateTime, index=True)
     disclosure_date_dt = Column(DateTime, index=True)
     disclosure_delay = Column(Integer)
+    closing_price = Column(Float)
+    low_amount = Column(Float)
+    high_amount = Column(Float)
 
 
     def __init__(self, **kwargs):
