@@ -106,6 +106,7 @@ class AllHouseTransactionModel(Base):
 
     id = Column(Integer, primary_key=True)
     representative = Column(String)
+    bio_id = Column(String)
     office = Column(String)
     ptr_link = Column(String)
     transaction_date = Column(String)

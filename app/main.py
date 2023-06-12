@@ -8,7 +8,13 @@ import httpx
 from sqlalchemy.orm import Session, sessionmaker
 from typing import List
 from app.database import get_db
-from app.models import SenatorTransactionModel, AllSenateTransactionModel, AllHouseTransactionModel, TopRepresentativeModel, TopSenatorModel
+from app.models import (
+    SenatorTransactionModel,
+    AllSenateTransactionModel,
+    AllHouseTransactionModel,
+    TopRepresentativeModel,
+    TopSenatorModel,
+)
 from app.models import Base
 from app.database import engine
 import re
@@ -25,23 +31,22 @@ import urllib.parse
 from decimal import Decimal
 from app.data_downloads import download_tickers_data, download_event
 from fastapi.staticfiles import StaticFiles
+import time
+from pydantic import BaseModel
+
 
 # from apscheduler.schedulers.background import BackgroundScheduler
 
 
-
-
-#https://github.com/rreichel3/US-Stock-Symbols/blob/main/nyse/nyse_full_tickers.json
+# https://github.com/rreichel3/US-Stock-Symbols/blob/main/nyse/nyse_full_tickers.json
 
 app = FastAPI()
 # scheduler = BackgroundScheduler()
-app.mount("/senator_photo", StaticFiles(directory="app/senator_photos"), name='senator_photos')
+app.mount(
+    "/senator_photo", StaticFiles(directory="app/senator_photos"), name="senator_photos"
+)
 
-origins = [
-    "http://localhost",
-    "http://localhost:3000",
-    "https://bukuviral.com"
-]
+origins = ["http://localhost", "http://localhost:3000", "https://bukuviral.com"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,63 +64,78 @@ async def add_cors_header(request, call_next):
     response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
-#Postgresql
+
+# Postgresql
 # SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-#SQLite database
+# SQLite database
 Base.metadata.create_all(bind=engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    
-    
+
+
 @app.on_event("startup")
 async def startup_event():
     await download_event()
     async with httpx.AsyncClient() as client:
-        response = await client.get('https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions_for_senators.json')
+        response = await client.get(
+            "https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions_for_senators.json"
+        )
     data = json.loads(response.text)
 
     session = SessionLocal()
     for senator in data:
-        for transaction in senator['transactions']:
-            if 'scanned_pdf' not in transaction:
+        for transaction in senator["transactions"]:
+            if "scanned_pdf" not in transaction:
                 # Check if transaction already exists in the database
-                existing_mysql_transaction = session.query(SenatorTransactionModel).filter_by(
-                    owner=transaction['owner'],
-                    transaction_date=transaction['transaction_date'],
-                    ticker=transaction['ticker']
-                ).first()
+                existing_mysql_transaction = (
+                    session.query(SenatorTransactionModel)
+                    .filter_by(
+                        owner=transaction["owner"],
+                        transaction_date=transaction["transaction_date"],
+                        ticker=transaction["ticker"],
+                    )
+                    .first()
+                )
                 if existing_mysql_transaction is not None:
                     continue  # Skip this transaction if it already exists
-                session.add(SenatorTransactionModel(
-                    first_name=senator['first_name'],
-                    last_name=senator['last_name'],
-                    office=senator['office'],
-                    ptr_link=senator['ptr_link'],
-                    date_received=senator['date_recieved'],
-                    transaction_date=transaction['transaction_date'],
-                    owner=transaction['owner'],
-                    ticker=transaction['ticker'],
-                    asset_description=transaction['asset_description'],
-                    asset_type=transaction['asset_type'],
-                    transaction_type=transaction['type'],
-                    amount=transaction['amount'],
-                    comment=transaction['comment'],
-                    party=transaction['party'],
-                    state=transaction['state'],
-                    industry=transaction['industry'],
-                    sector=transaction['sector']
-                ))
+                session.add(
+                    SenatorTransactionModel(
+                        first_name=senator["first_name"],
+                        last_name=senator["last_name"],
+                        office=senator["office"],
+                        ptr_link=senator["ptr_link"],
+                        date_received=senator["date_recieved"],
+                        transaction_date=transaction["transaction_date"],
+                        owner=transaction["owner"],
+                        ticker=transaction["ticker"],
+                        asset_description=transaction["asset_description"],
+                        asset_type=transaction["asset_type"],
+                        transaction_type=transaction["type"],
+                        amount=transaction["amount"],
+                        comment=transaction["comment"],
+                        party=transaction["party"],
+                        state=transaction["state"],
+                        industry=transaction["industry"],
+                        sector=transaction["sector"],
+                    )
+                )
     session.commit()
     session.close()
 
     async with httpx.AsyncClient() as client:
-        senate_response = await client.get('https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions.json', headers={"Cache-Control": "no-cache"})
+        senate_response = await client.get(
+            "https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions.json",
+            headers={"Cache-Control": "no-cache"},
+        )
     senate_data = json.loads(senate_response.text)
-    senate_sorted_transactions = sorted(senate_data, key=lambda x: datetime.datetime.strptime(
-        x['transaction_date'], '%m/%d/%Y'), reverse=True)
+    senate_sorted_transactions = sorted(
+        senate_data,
+        key=lambda x: datetime.datetime.strptime(x["transaction_date"], "%m/%d/%Y"),
+        reverse=True,
+    )
 
     session = SessionLocal()
-    eastern = pytz.timezone('America/New_York')
+    eastern = pytz.timezone("America/New_York")
 
     with open("app/senators.json", "r") as f:
         senators_data = json.load(f)
@@ -123,21 +143,32 @@ async def startup_event():
 
     with open("app/transactions_with_closing_prices.json", "r") as f:
         transactions_data = json.load(f)
-        
-
 
     for transaction in senate_sorted_transactions:
-        if 'scanned_pdf' not in transaction:
+        if "scanned_pdf" not in transaction:
             try:
-                names = transaction['senator'].split(' ', 1)
+                names = transaction["senator"].split(" ", 1)
                 first_name = names[0]
-                last_name = names[1] if len(names) > 1 else ''
-                transaction_date_dt = datetime.datetime.strptime(transaction['transaction_date'], '%m/%d/%Y').replace(tzinfo=eastern)
-                disclosure_date_dt = datetime.datetime.strptime(transaction['disclosure_date'], '%m/%d/%Y').replace(tzinfo=eastern)
+                last_name = names[1] if len(names) > 1 else ""
+                transaction_date_dt = datetime.datetime.strptime(
+                    transaction["transaction_date"], "%m/%d/%Y"
+                ).replace(tzinfo=eastern)
+                disclosure_date_dt = datetime.datetime.strptime(
+                    transaction["disclosure_date"], "%m/%d/%Y"
+                ).replace(tzinfo=eastern)
                 disclosure_delay = (disclosure_date_dt - transaction_date_dt).days
-                
-                senator = next((s for s in senators_data if s['first_name'] == first_name and s['last_name'] == last_name), None)
-                amount_match = re.match(r"\$(\d+(?:,\d+)?) - \$(\d+(?:,\d+)?)", transaction['amount'])
+
+                senator = next(
+                    (
+                        s
+                        for s in senators_data
+                        if s["first_name"] == first_name and s["last_name"] == last_name
+                    ),
+                    None,
+                )
+                amount_match = re.match(
+                    r"\$(\d+(?:,\d+)?) - \$(\d+(?:,\d+)?)", transaction["amount"]
+                )
                 if amount_match:
                     low_amount = float(amount_match.group(1).replace(",", ""))
                     high_amount = float(amount_match.group(2).replace(",", ""))
@@ -149,65 +180,84 @@ async def startup_event():
 
             except ValueError:
                 continue
-            
 
             matching_transaction = next(
-                (t for t in transactions_data if t['transaction_date'] == transaction['transaction_date']),
-                None
+                (
+                    t
+                    for t in transactions_data
+                    if t["transaction_date"] == transaction["transaction_date"]
+                ),
+                None,
             )
             if matching_transaction is not None:
-                closing_price_str = matching_transaction['closing_price']
-                closing_price_str = closing_price_str.replace(',', '') if closing_price_str else None
-                closing_price = float(closing_price_str) if closing_price_str is not None else None
+                closing_price_str = matching_transaction["closing_price"]
+                closing_price_str = (
+                    closing_price_str.replace(",", "") if closing_price_str else None
+                )
+                closing_price = (
+                    float(closing_price_str) if closing_price_str is not None else None
+                )
             else:
                 closing_price = None
-                  
-            if session.query(AllSenateTransactionModel).filter_by(
-                ptr_link=transaction['ptr_link'],
-                transaction_date=transaction['transaction_date'],       
-            ).count() == 0:
-                session.add(AllSenateTransactionModel(
-                    senator=transaction['senator'],
-                    bio_id = senator['bio_id'],
-                    first_name=first_name,
-                    last_name=last_name,
-                    ptr_link=transaction['ptr_link'],
-                    transaction_date=transaction['transaction_date'],
-                    transaction_date_dt=transaction_date_dt,
-                    disclosure_date=transaction['disclosure_date'],
-                    disclosure_date_dt=disclosure_date_dt,
-                    disclosure_delay=disclosure_delay,
-                    owner=transaction['owner'],
-                    ticker=transaction['ticker'],
-                    asset_description=transaction['asset_description'],
-                    asset_type=transaction['asset_type'],
-                    transaction_type=transaction['type'],
-                    amount=transaction['amount'],
-                    comment=transaction.get('comment'),
-                    party=transaction.get('party'),
-                    state=transaction.get('state'),
-                    industry=transaction.get('industry'),
-                    sector=transaction.get('sector'),
-                    high_amount=high_amount,
-                    low_amount=low_amount,
-                    closing_price=closing_price,
-                ))
+
+            if (
+                session.query(AllSenateTransactionModel)
+                .filter_by(
+                    ptr_link=transaction["ptr_link"],
+                    transaction_date=transaction["transaction_date"],
+                )
+                .count()
+                == 0
+            ):
+                session.add(
+                    AllSenateTransactionModel(
+                        senator=transaction["senator"],
+                        bio_id=senator["bio_id"],
+                        first_name=first_name,
+                        last_name=last_name,
+                        ptr_link=transaction["ptr_link"],
+                        transaction_date=transaction["transaction_date"],
+                        transaction_date_dt=transaction_date_dt,
+                        disclosure_date=transaction["disclosure_date"],
+                        disclosure_date_dt=disclosure_date_dt,
+                        disclosure_delay=disclosure_delay,
+                        owner=transaction["owner"],
+                        ticker=transaction["ticker"],
+                        asset_description=transaction["asset_description"],
+                        asset_type=transaction["asset_type"],
+                        transaction_type=transaction["type"],
+                        amount=transaction["amount"],
+                        comment=transaction.get("comment"),
+                        party=transaction.get("party"),
+                        state=transaction.get("state"),
+                        industry=transaction.get("industry"),
+                        sector=transaction.get("sector"),
+                        high_amount=high_amount,
+                        low_amount=low_amount,
+                        closing_price=closing_price,
+                    )
+                )
 
     session.commit()
     session.close()
-        
-    # The following code calculates the top senators with the most trades in the last 60 days and stores the result in the TopSenatorModel table.
+
+    # The following code calculates the top senators with the most trades in the last 90 days and stores the result in the TopSenatorModel table.
     # Get the current date
     current_date = datetime.date.today()
 
-    # Get the date 60 days ago
-    days_ago_60 = current_date - datetime.timedelta(days=60)
+    # Get the date 90 days ago
+    days_ago_90 = current_date - datetime.timedelta(days=90)
     session = SessionLocal()
     # Query the database for all transactions
     all_transactions = session.query(AllSenateTransactionModel).all()
 
-    # Filter transactions in the last 60 days
-    recent_transactions = [transaction for transaction in all_transactions if datetime.datetime.strptime(transaction.transaction_date, '%m/%d/%Y').date() >= days_ago_60]
+    # Filter transactions in the last 90 days
+    recent_transactions = [
+        transaction
+        for transaction in all_transactions
+        if datetime.datetime.strptime(transaction.transaction_date, "%m/%d/%Y").date()
+        >= days_ago_90
+    ]
     print(f"Number of recent transactions: {len(recent_transactions)}")  # Debug print
     # Create a Counter object to count the frequency of each senators
     sen_counter = Counter([transaction.senator for transaction in recent_transactions])
@@ -224,99 +274,142 @@ async def startup_event():
         new_sen = TopSenatorModel(senator=sen, trade_frequency=freq)
         session.add(new_sen)
         print(f"Adding: {new_sen}")  # Debug print
-        
+
     session.commit()
     session.close()
 
-
     async with httpx.AsyncClient() as client:
-        house_response = await client.get('https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json')
+        house_response = await client.get(
+            "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json"
+        )
     house_data = json.loads(house_response.text)
-    house_lambda_sorted_transactions = sorted(house_data, key=lambda x: datetime.datetime.strptime(
-        x['disclosure_date'], '%m/%d/%Y'), reverse=True)
+    house_lambda_sorted_transactions = sorted(
+        house_data,
+        key=lambda x: datetime.datetime.strptime(x["disclosure_date"], "%m/%d/%Y"),
+        reverse=True,
+    )
     house_sorted_transactions = []
-    type_map = {'sale_partial': 'Sale (Partial)', 'sale_full': 'Sale (Full)',
-                'purchase': 'Purchase', 'exchange': 'Exchange'}
+    type_map = {
+        "sale_partial": "Sale (Partial)",
+        "sale_full": "Sale (Full)",
+        "purchase": "Purchase",
+        "exchange": "Exchange",
+    }
+
+    with open("app/representatives.json", "r") as f:
+        house_bio_ids = json.load(f)
 
     with SessionLocal() as session:
         for transaction in house_lambda_sorted_transactions:
             try:
                 transaction_date = datetime.datetime.strptime(
-                    transaction['transaction_date'], '%Y-%m-%d')
-                transaction_type = transaction['type']
+                    transaction["transaction_date"], "%Y-%m-%d"
+                )
+                transaction_type = transaction["type"]
                 if transaction_type in type_map:
                     transaction_type = type_map[transaction_type]
                 else:
                     print(
-                        f"Warning: Unknown transaction type {transaction_type}. Saving as-is.")
-                transaction['transaction_date'] = transaction_date.strftime(
-                    '%m/%d/%Y')
-                transaction['transaction_type'] = transaction_type
+                        f"Warning: Unknown transaction type {transaction_type}. Saving as-is."
+                    )
+                transaction["transaction_date"] = transaction_date.strftime("%m/%d/%Y")
+                transaction["transaction_type"] = transaction_type
                 house_sorted_transactions.append(transaction)
             except ValueError:
                 print(
-                    f"Error: Invalid transaction date format: {transaction['transaction_date']}. Skipping transaction.")
+                    f"Error: Invalid transaction date format: {transaction['transaction_date']}. Skipping transaction."
+                )
                 continue
 
-        eastern = pytz.timezone('America/New_York')
-        
+        eastern = pytz.timezone("America/New_York")
+
         for transaction in house_sorted_transactions:
-            if 'scanned_pdf' not in transaction:
+            if "scanned_pdf" not in transaction:
+                representative_name = transaction["representative"]
+                representative = next(
+                    (
+                        r
+                        for r in house_bio_ids
+                        if r["representative"] == representative_name
+                    ),
+                    None,
+                )
+                if representative is None:
+                    continue
                 # Check if a record with the same transaction date and ticker already exists in the database
-                existing_record = session.query(AllHouseTransactionModel).filter_by(
-                    transaction_date=transaction['transaction_date'], ticker=transaction['ticker']).first()
+                existing_record = (
+                    session.query(AllHouseTransactionModel)
+                    .filter_by(
+                        transaction_date=transaction["transaction_date"],
+                        ticker=transaction["ticker"],
+                    )
+                    .first()
+                )
                 if existing_record:
                     continue  # Skip this transaction if it already exists in the database
                 try:
-                    transaction_date_dt = datetime.datetime.strptime(transaction['transaction_date'], '%m/%d/%Y').replace(tzinfo=eastern)
-                    disclosure_date_dt = datetime.datetime.strptime(transaction['disclosure_date'], '%m/%d/%Y').replace(tzinfo=eastern)
+                    transaction_date_dt = datetime.datetime.strptime(
+                        transaction["transaction_date"], "%m/%d/%Y"
+                    ).replace(tzinfo=eastern)
+                    disclosure_date_dt = datetime.datetime.strptime(
+                        transaction["disclosure_date"], "%m/%d/%Y"
+                    ).replace(tzinfo=eastern)
                     disclosure_delay = (disclosure_date_dt - transaction_date_dt).days
                 except ValueError:
                     continue
-                session.add(AllHouseTransactionModel(
-                    transaction_date=transaction['transaction_date'],
-                    disclosure_date=transaction['disclosure_date'],
-                    transaction_date_dt=transaction_date_dt,
-                    disclosure_date_dt=disclosure_date_dt,
-                    disclosure_delay=disclosure_delay,
-                    representative=transaction['representative'],
-                    owner=transaction['owner'],
-                    ticker=transaction['ticker'],
-                    asset_description=transaction['asset_description'],
-                    district=transaction['district'],
-                    transaction_type=transaction['transaction_type'],
-                    amount=transaction['amount'],
-                    party=transaction['party'],
-                    state=transaction['state'],
-                    industry=transaction['industry'],
-                    sector=transaction['sector']
-                ))
+                session.add(
+                    AllHouseTransactionModel(
+                        transaction_date=transaction["transaction_date"],
+                        disclosure_date=transaction["disclosure_date"],
+                        transaction_date_dt=transaction_date_dt,
+                        disclosure_date_dt=disclosure_date_dt,
+                        disclosure_delay=disclosure_delay,
+                        representative=transaction["representative"],
+                        bio_id=representative["bio_id"],
+                        owner=transaction["owner"],
+                        ticker=transaction["ticker"],
+                        asset_description=transaction["asset_description"],
+                        district=transaction["district"],
+                        transaction_type=transaction["transaction_type"],
+                        amount=transaction["amount"],
+                        party=transaction["party"],
+                        state=transaction["state"],
+                        industry=transaction["industry"],
+                        sector=transaction["sector"],
+                    )
+                )
         session.commit()
-        
-        # The following code calculates the top representatives with the most trades in the last 60 days and stores the result in the TopRepresentativeModel table.
+
+        # The following code calculates the top representatives with the most trades in the last 90 days and stores the result in the TopRepresentativeModel table.
         # Get the current date
         current_date = datetime.date.today()
 
-        # Get the date 60 days ago
-        days_ago_60 = current_date - datetime.timedelta(days=60)
+        # Get the date 90 days ago
+        days_ago_90 = current_date - datetime.timedelta(days=90)
 
         # Query the database for all transactions
         all_transactions = session.query(AllHouseTransactionModel).all()
 
-        # Filter transactions in the last 60 days
+        # Filter transactions in the last 90 days
         recent_transactions = []
         for transaction in all_transactions:
             try:
-                transaction_date = datetime.datetime.strptime(transaction.transaction_date, '%m/%d/%Y').date()
-                if transaction_date >= days_ago_60:
+                transaction_date = datetime.datetime.strptime(
+                    transaction.transaction_date, "%m/%d/%Y"
+                ).date()
+                if transaction_date >= days_ago_90:
                     recent_transactions.append(transaction)
             except ValueError:
                 # Skip transactions with invalid date format
                 continue
-        print(f"Number of recent transactions: {len(recent_transactions)}")  # Debug print
+        print(
+            f"Number of recent transactions: {len(recent_transactions)}"
+        )  # Debug print
 
         # Create a Counter object to count the frequency of each representative
-        rep_counter = Counter([transaction.representative for transaction in recent_transactions])
+        rep_counter = Counter(
+            [transaction.representative for transaction in recent_transactions]
+        )
 
         # Get the 5 most common representatives
         top_reps = rep_counter.most_common(5)
@@ -331,9 +424,9 @@ async def startup_event():
             session.add(new_rep)
             print(f"Adding: {new_rep}")  # Debug print
         session.commit()
-        
-        
-@app.get('/transactions/senate/senators/holdings')
+
+
+@app.get("/transactions/senate/senators/holdings")
 async def get_senators_holdings(db: Session = Depends(get_db)):
     # Query the database to retrieve all transactions for senators
     transactions = db.query(AllSenateTransactionModel).all()
@@ -357,7 +450,9 @@ async def get_senators_holdings(db: Session = Depends(get_db)):
         if transaction_type == "Purchase":
             if ticker not in holdings:
                 holdings[ticker] = 0
-            holdings[ticker] += calculate_holding_amount(low_amount, high_amount, purchase_price)
+            holdings[ticker] += calculate_holding_amount(
+                low_amount, high_amount, purchase_price
+            )
         elif transaction_type == "Sale (Full)":
             if ticker in holdings:
                 del holdings[ticker]
@@ -373,10 +468,16 @@ async def get_senators_holdings(db: Session = Depends(get_db)):
 
     return {"senators_holdings": senators_holdings}
 
-def calculate_holding_amount(low_amount: Optional[int], high_amount: Optional[int], closing_price: Optional[float]) -> float:
+
+def calculate_holding_amount(
+    low_amount: Optional[int],
+    high_amount: Optional[int],
+    closing_price: Optional[float],
+) -> float:
     if low_amount is None or high_amount is None or closing_price is None:
         return 0.0
     return (low_amount + high_amount) / 2 * closing_price
+
 
 # Disclaimer: Holdings and Estimated Amounts Calculation
 
@@ -402,7 +503,7 @@ def calculate_holding_amount(low_amount: Optional[int], high_amount: Optional[in
 # For more detailed information, please refer to the individual transaction records and consult with a qualified financial professional.
 
 
-@app.get('/transactions/house/representatives/holdings')
+@app.get("/transactions/house/representatives/holdings")
 async def get_senators_holdings(db: Session = Depends(get_db)):
     # Query the database to retrieve all transactions
     transactions = db.query(AllHouseTransactionModel).all()
@@ -421,9 +522,13 @@ async def get_senators_holdings(db: Session = Depends(get_db)):
             holdings_by_representative[representative].discard(ticker)
 
     # Convert the holdings to a list of dictionaries for each senator
-    representatives_holdings = [{"representative": representative, "holdings": list(holdings)} for representative, holdings in holdings_by_representative.items()]
+    representatives_holdings = [
+        {"representative": representative, "holdings": list(holdings)}
+        for representative, holdings in holdings_by_representative.items()
+    ]
 
     return {"senators_holdings": representatives_holdings}
+
 
 # ^^^ Disclosure: Estimated Stock Holdings
 
@@ -435,15 +540,21 @@ async def get_senators_holdings(db: Session = Depends(get_db)):
 
 # 3. Ticker Symbols: The provided list of ticker symbols represents the stocks that senators are estimated to be holding based on available transaction data. It does not indicate the exact number of shares held or the specific financial value of the holdings.
 
+
 # Please exercise caution and verify the information independently for any investment or decision-making purposes. We recommend consulting official financial disclosures and other reliable sources for the most up-to-date and accurate information regarding senators' stock holdings.
-#! 60 Day Breakdown
-@app.get('/transactions/senate/ticker/breakdown')
+#! 90 Day Breakdown
+@app.get("/transactions/senate/ticker/breakdown")
 async def get_ticker_breakdown(ticker: str, db: Session = Depends(get_db)):
-    # Query the database to retrieve the transactions for the specified ticker in the last 60 days
-    ticker_transactions = db.query(AllSenateTransactionModel).filter(
-        AllSenateTransactionModel.ticker == ticker,
-        AllSenateTransactionModel.transaction_date_dt >= datetime.datetime.now() - datetime.timedelta(days=60)
-    ).all()
+    # Query the database to retrieve the transactions for the specified ticker in the last 90 days
+    ticker_transactions = (
+        db.query(AllSenateTransactionModel)
+        .filter(
+            AllSenateTransactionModel.ticker == ticker,
+            AllSenateTransactionModel.transaction_date_dt
+            >= datetime.datetime.now() - datetime.timedelta(days=90),
+        )
+        .all()
+    )
 
     # Calculate the breakdown by party and transaction type
     party_breakdown = defaultdict(int)
@@ -474,19 +585,25 @@ async def get_ticker_breakdown(ticker: str, db: Session = Depends(get_db)):
         "party_breakdown": dict(party_breakdown),
         "party_percentages": party_percentages,
         "type_breakdown": dict(type_breakdown),
-        "type_percentages": type_percentages
+        "type_percentages": type_percentages,
     }
 
     return breakdown_data
 
-#! 60 Day Breakdown
-@app.get('/transactions/house/ticker/breakdown')
+
+#! 90 Day Breakdown
+@app.get("/transactions/house/ticker/breakdown")
 async def get_tickerHouse_breakdown(ticker: str, db: Session = Depends(get_db)):
-    # Query the database to retrieve the transactions for the specified ticker in the last 60 days
-    ticker_transactions = db.query(AllHouseTransactionModel).filter(
-        AllHouseTransactionModel.ticker == ticker,
-        AllHouseTransactionModel.transaction_date_dt >= datetime.datetime.now() - datetime.timedelta(days=60)
-    ).all()
+    # Query the database to retrieve the transactions for the specified ticker in the last 90 days
+    ticker_transactions = (
+        db.query(AllHouseTransactionModel)
+        .filter(
+            AllHouseTransactionModel.ticker == ticker,
+            AllHouseTransactionModel.transaction_date_dt
+            >= datetime.datetime.now() - datetime.timedelta(days=90),
+        )
+        .all()
+    )
 
     # Calculate the breakdown by party and transaction type
     party_breakdown = defaultdict(int)
@@ -517,131 +634,246 @@ async def get_tickerHouse_breakdown(ticker: str, db: Session = Depends(get_db)):
         "party_breakdown": dict(party_breakdown),
         "party_percentages": party_percentages,
         "type_breakdown": dict(type_breakdown),
-        "type_percentages": type_percentages
+        "type_percentages": type_percentages,
     }
 
     return breakdown_data
 
 
 #! Ticker Search/Totals/Summary
-@app.get('/transactions/senate/tickers/all')
+@app.get("/transactions/senate/tickers/all")
 async def get_unique_tickers_with_transaction_count(db: Session = Depends(get_db)):
     # Query the database to retrieve unique tickers and their transaction counts
     ticker_counts = (
-        db.query(AllSenateTransactionModel.ticker, label('transaction_count', func.count()))
+        db.query(
+            AllSenateTransactionModel.ticker, label("transaction_count", func.count())
+        )
         .group_by(AllSenateTransactionModel.ticker)
         .order_by(AllSenateTransactionModel.ticker)
         .all()
     )
 
     # Create a list of dictionaries containing ticker and transaction count
-    tickers = [{"ticker": ticker, "transaction_count": count} for ticker, count in ticker_counts]
+    tickers = [
+        {"ticker": ticker, "transaction_count": count}
+        for ticker, count in ticker_counts
+    ]
 
     return {"tickers": tickers}
 
 
-    
-@app.get('/transactions/senate/{first_name}-{last_name}')
-async def get_transactions(first_name: str, last_name: str, db: Session = Depends(get_db)):
-    transactions = await run_in_threadpool(db.query(AllSenateTransactionModel).filter_by(first_name=first_name, last_name=last_name).all)
+@app.get("/transactions/senate/{first_name}-{last_name}")
+async def get_transactions(
+    first_name: str, last_name: str, db: Session = Depends(get_db)
+):
+    transactions = await run_in_threadpool(
+        db.query(AllSenateTransactionModel)
+        .filter_by(first_name=first_name, last_name=last_name)
+        .all
+    )
     for transaction in transactions:
         if transaction.ticker is not None:
-            ticker_match = re.search(r'>(\w+)<', transaction.ticker)
+            ticker_match = re.search(r">(\w+)<", transaction.ticker)
             if ticker_match:
                 transaction.ticker = ticker_match.group(1)
-    return [SenatorTransactionModel(**{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}) for transaction in transactions]
-
-@app.get('/transactions/senate/senator/{senator}')
-async def get_transactions(senator: str, db: Session = Depends(get_db)):
-    transactions = await run_in_threadpool(db.query(AllSenateTransactionModel).filter_by(senator=senator).all)
-    for transaction in transactions:
-        if transaction.ticker is not None:
-            ticker_match = re.search(r'>(\w+)<', transaction.ticker)
-            if ticker_match:
-                transaction.ticker = ticker_match.group(1)
-    return [SenatorTransactionModel(**{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}) for transaction in transactions]
-
-
-
-@app.get('/transactions/house/party/{party}')
-async def get_transactions_by_party(party: str, db: Session = Depends(get_db)):
-    transactions = await run_in_threadpool(db.query(AllHouseTransactionModel).filter_by(party=party).all)
     return [
-        AllHouseTransactionModel(
-            **{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}
+        SenatorTransactionModel(
+            **{
+                k: v
+                for k, v in transaction.__dict__.items()
+                if k != "_sa_instance_state"
+            }
         )
         for transaction in transactions
     ]
+
+
+@app.get("/transactions/senate/senator/{senator}")
+async def get_transactions(senator: str, db: Session = Depends(get_db)):
+    transactions = await run_in_threadpool(
+        db.query(AllSenateTransactionModel).filter_by(senator=senator).all
+    )
+    for transaction in transactions:
+        if transaction.ticker is not None:
+            ticker_match = re.search(r">(\w+)<", transaction.ticker)
+            if ticker_match:
+                transaction.ticker = ticker_match.group(1)
+    return [
+        SenatorTransactionModel(
+            **{
+                k: v
+                for k, v in transaction.__dict__.items()
+                if k != "_sa_instance_state"
+            }
+        )
+        for transaction in transactions
+    ]
+
+
+@app.get("/transactions/house/party/{party}")
+async def get_transactions_by_party(party: str, db: Session = Depends(get_db)):
+    transactions = await run_in_threadpool(
+        db.query(AllHouseTransactionModel).filter_by(party=party).all
+    )
+    return [
+        AllHouseTransactionModel(
+            **{
+                k: v
+                for k, v in transaction.__dict__.items()
+                if k != "_sa_instance_state"
+            }
+        )
+        for transaction in transactions
+    ]
+
 
 #! State endpoint
 
 
-@app.get('/transactions/house/state/{state}')
+@app.get("/transactions/house/state/{state}")
 async def get_transactions_by_state(state: str, db: Session = Depends(get_db)):
-    transactions = await run_in_threadpool(db.query(SenatorTransactionModel).filter_by(state=state).all)
+    transactions = await run_in_threadpool(
+        db.query(SenatorTransactionModel).filter_by(state=state).all
+    )
     return [
         SenatorTransactionModel(
-            **{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}
+            **{
+                k: v
+                for k, v in transaction.__dict__.items()
+                if k != "_sa_instance_state"
+            }
         )
         for transaction in transactions
     ]
 
 
-@app.get('/transactions/senate/party/{party}')
+@app.get("/transactions/senate/party/{party}")
 async def get_transactions_by_party(party: str, db: Session = Depends(get_db)):
-    transactions = await run_in_threadpool(db.query(SenatorTransactionModel).filter_by(party=party).all)
+    transactions = await run_in_threadpool(
+        db.query(SenatorTransactionModel).filter_by(party=party).all
+    )
     return [
         SenatorTransactionModel(
-            **{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}
+            **{
+                k: v
+                for k, v in transaction.__dict__.items()
+                if k != "_sa_instance_state"
+            }
         )
         for transaction in transactions
     ]
 
 
-@app.get('/transactions/senate/sector/{sector}')
-async def get_transactions_by_sector(sector: str, db: Session = Depends(get_db)):
-    transactions = await run_in_threadpool(db.query(SenatorTransactionModel).filter_by(sector=sector).all)
-    return [
-        SenatorTransactionModel(
-            **{k: v for k, v in transaction.__dict__.items() if k != '_sa_instance_state'}
+@app.get("/transactions/senate/sector")
+async def get_senate_transactions_by_sector(
+    senator: Optional[str] = None, db: Session = Depends(get_db)
+):
+    query = (
+        db.query(AllSenateTransactionModel)
+        .filter(
+            AllSenateTransactionModel.ticker != None,
+            AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
         )
-        for transaction in transactions
-    ]
+        .order_by(desc(AllSenateTransactionModel.transaction_date_dt))
+    )
+
+    # Filter by representative if provided
+    if senator is not None:
+        query = query.filter(AllSenateTransactionModel.senator == senator)
+
+    transactions = await run_in_threadpool(query.all)
+
+    sector_counts = defaultdict(int)
+
+    for transaction in transactions:
+        sector = transaction.sector
+        if sector:
+            sector_counts[sector] += 1
+
+    return {"total_transactions": len(transactions), "sector_counts": sector_counts}
+
+
+@app.get("/transactions/senate/industry")
+async def get_senate_transactions_by_industry(
+    senator: Optional[str] = None, db: Session = Depends(get_db)
+):
+    query = (
+        db.query(AllSenateTransactionModel)
+        .filter(
+            AllSenateTransactionModel.ticker != None,
+            AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
+        )
+        .order_by(desc(AllSenateTransactionModel.transaction_date_dt))
+    )
+
+    # Filter by representative if provided
+    if senator is not None:
+        query = query.filter(AllSenateTransactionModel.senator == senator)
+
+    transactions = await run_in_threadpool(query.all)
+
+    industry_counts = defaultdict(int)
+
+    for transaction in transactions:
+        industry = transaction.industry
+        if industry:
+            industry_counts[industry] += 1
+
+    return {
+        "total_transactions": len(transactions),
+        "industry_counts": industry_counts,
+    }
 
 
 async def get_transactions(first_name: str, last_name: str, db: Session):
-    transactions = await run_in_threadpool(db.query(SenatorTransactionModel).filter_by(first_name=first_name, last_name=last_name).all)
+    transactions = await run_in_threadpool(
+        db.query(SenatorTransactionModel)
+        .filter_by(first_name=first_name, last_name=last_name)
+        .all
+    )
     for transaction in transactions:
         if transaction.ticker is not None:
-            ticker_match = re.search(r'>(\w+)<', transaction.ticker)
+            ticker_match = re.search(r">(\w+)<", transaction.ticker)
             if ticker_match:
                 transaction.ticker = ticker_match.group(1)
     return [transaction.__dict__ for transaction in transactions]
 
 
-with open('app/nyse_full_tickers.json') as file:
+with open("app/nyse_full_tickers.json") as file:
     ticker_data = json.load(file)
-    
-with open('app/nasdaq_full_tickers.json') as nasdaq_file:
+
+with open("app/nasdaq_full_tickers.json") as nasdaq_file:
     nasdaq_ticker_data = json.load(nasdaq_file)
 
-@app.get('/transactions/senate/all')
-async def get_all_senate_transactions(page: Optional[int] = None, items_per_page: Optional[int] = None, senator: Optional[str] = None, bio_id: Optional[str] = None, ticker: Optional[str] = None, db: Session = Depends(get_db)):
+
+@app.get("/transactions/senate/all")
+async def get_all_senate_transactions(
+    page: Optional[int] = None,
+    items_per_page: Optional[int] = None,
+    senator: Optional[str] = None,
+    bio_id: Optional[str] = None,
+    ticker: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     query = db.query(AllSenateTransactionModel).filter(
         AllSenateTransactionModel.ticker != None,
-        AllSenateTransactionModel.ticker.notin_(["--", "N/A"])
+        AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
     )
 
     if senator is not None:
         senator = urllib.parse.unquote(senator)
-        query = query.filter(func.lower(AllSenateTransactionModel.senator).contains(func.lower(senator)))
-    
+        query = query.filter(
+            func.lower(AllSenateTransactionModel.senator).contains(func.lower(senator))
+        )
+
     if bio_id is not None:
         query = query.filter(AllSenateTransactionModel.bio_id == bio_id)
-        
+
     if ticker is not None:
         ticker = urllib.parse.unquote(ticker)
-        query = query.filter(func.lower(AllSenateTransactionModel.ticker) == func.lower(ticker))
+        query = query.filter(
+            func.lower(AllSenateTransactionModel.ticker) == func.lower(ticker)
+        )
 
     query = query.order_by(desc(AllSenateTransactionModel.transaction_date_dt))
 
@@ -657,23 +889,27 @@ async def get_all_senate_transactions(page: Optional[int] = None, items_per_page
     for transaction in transactions:
         ticker = transaction.ticker
 
-        matching_ticker = next((item for item in ticker_data if item['symbol'] == ticker), None)
+        matching_ticker = next(
+            (item for item in ticker_data if item["symbol"] == ticker), None
+        )
 
         if matching_ticker:
-            company_name = matching_ticker['name']
-            current_price_str = matching_ticker['lastsale']
+            company_name = matching_ticker["name"]
+            current_price_str = matching_ticker["lastsale"]
         else:
-            matching_ticker = next((item for item in nasdaq_ticker_data if item['symbol'] == ticker), None)
+            matching_ticker = next(
+                (item for item in nasdaq_ticker_data if item["symbol"] == ticker), None
+            )
 
             if matching_ticker:
-                company_name = matching_ticker['name']
-                current_price_str = matching_ticker['lastsale']
+                company_name = matching_ticker["name"]
+                current_price_str = matching_ticker["lastsale"]
             else:
                 company_name = None
                 current_price_str = None
 
         if current_price_str:
-            current_price = float(current_price_str.replace('$', ''))
+            current_price = float(current_price_str.replace("$", ""))
             current_price_int = round(current_price, 2)
         else:
             current_price = None
@@ -686,42 +922,60 @@ async def get_all_senate_transactions(page: Optional[int] = None, items_per_page
         closing_price = transaction.closing_price
 
         if closing_price is not None and current_price_int is not None:
-            percentage_return = ((current_price_int - closing_price) / closing_price) * 100
+            percentage_return = (
+                (current_price_int - closing_price) / closing_price
+            ) * 100
         else:
             percentage_return = None
 
         transaction.percentage_return = percentage_return
 
         # Convert transaction date to desired format (e.g., Apr 04, 2023)
-        transaction_date = transaction.transaction_date_dt.strftime('%b %d, %Y')
+        transaction_date = transaction.transaction_date_dt.strftime("%b %d, %Y")
         transaction.transaction_date_formatted = transaction_date
 
         # Convert disclosure date to desired format (e.g., May 19, 2021)
-        disclosure_date = datetime.datetime.strptime(transaction.disclosure_date, '%m/%d/%Y').strftime('%b %d, %Y')
+        disclosure_date = datetime.datetime.strptime(
+            transaction.disclosure_date, "%m/%d/%Y"
+        ).strftime("%b %d, %Y")
         transaction.disclosure_date_formatted = disclosure_date
 
-    return {"total": total, "transactions": [transaction.__dict__ for transaction in transactions]}
+    return {
+        "total": total,
+        "transactions": [transaction.__dict__ for transaction in transactions],
+    }
 
-@app.get('/transactions/senate/all_by_disclosure_date')
-async def get_all_senate_by_disclosure_transactions(page: Optional[int] = None, items_per_page: Optional[int] = None, senator: Optional[str] = None, bio_id: Optional[str] = None, ticker: Optional[str] = None, db: Session = Depends(get_db)):
+
+@app.get("/transactions/senate/all_by_disclosure_date")
+async def get_all_senate_by_disclosure_transactions(
+    page: Optional[int] = None,
+    items_per_page: Optional[int] = None,
+    senator: Optional[str] = None,
+    bio_id: Optional[str] = None,
+    ticker: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     query = db.query(AllSenateTransactionModel).filter(
         AllSenateTransactionModel.ticker != None,
-        AllSenateTransactionModel.ticker.notin_(["--", "N/A"])
+        AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
     )
 
     if senator is not None:
         senator = urllib.parse.unquote(senator)
-        query = query.filter(func.lower(AllSenateTransactionModel.senator).contains(func.lower(senator)))
-    
+        query = query.filter(
+            func.lower(AllSenateTransactionModel.senator).contains(func.lower(senator))
+        )
+
     if bio_id is not None:
         query = query.filter(AllSenateTransactionModel.bio_id == bio_id)
-        
+
     if ticker is not None:
         ticker = urllib.parse.unquote(ticker)
-        query = query.filter(func.lower(AllSenateTransactionModel.ticker) == func.lower(ticker))
+        query = query.filter(
+            func.lower(AllSenateTransactionModel.ticker) == func.lower(ticker)
+        )
 
     query = query.order_by(desc(AllSenateTransactionModel.disclosure_date_dt))
-
 
     if page is not None and items_per_page is not None:
         offset = page * items_per_page
@@ -732,23 +986,27 @@ async def get_all_senate_by_disclosure_transactions(page: Optional[int] = None, 
     for transaction in transactions:
         ticker = transaction.ticker
 
-        matching_ticker = next((item for item in ticker_data if item['symbol'] == ticker), None)
+        matching_ticker = next(
+            (item for item in ticker_data if item["symbol"] == ticker), None
+        )
 
         if matching_ticker:
-            company_name = matching_ticker['name']
-            current_price_str = matching_ticker['lastsale']
+            company_name = matching_ticker["name"]
+            current_price_str = matching_ticker["lastsale"]
         else:
-            matching_ticker = next((item for item in nasdaq_ticker_data if item['symbol'] == ticker), None)
+            matching_ticker = next(
+                (item for item in nasdaq_ticker_data if item["symbol"] == ticker), None
+            )
 
             if matching_ticker:
-                company_name = matching_ticker['name']
-                current_price_str = matching_ticker['lastsale']
+                company_name = matching_ticker["name"]
+                current_price_str = matching_ticker["lastsale"]
             else:
                 company_name = None
                 current_price_str = None
 
         if current_price_str:
-            current_price = float(current_price_str.replace('$', ''))
+            current_price = float(current_price_str.replace("$", ""))
             current_price_int = round(current_price, 2)
         else:
             current_price = None
@@ -761,32 +1019,50 @@ async def get_all_senate_by_disclosure_transactions(page: Optional[int] = None, 
         closing_price = transaction.closing_price
 
         if closing_price is not None and current_price_int is not None:
-            percentage_return = ((current_price_int - closing_price) / closing_price) * 100
+            percentage_return = (
+                (current_price_int - closing_price) / closing_price
+            ) * 100
         else:
             percentage_return = None
 
         transaction.percentage_return = percentage_return
 
         # Convert transaction date to desired format (e.g., Apr 04, 2023)
-        transaction_date = transaction.transaction_date_dt.strftime('%b %d, %Y')
+        transaction_date = transaction.transaction_date_dt.strftime("%b %d, %Y")
         transaction.transaction_date_formatted = transaction_date
 
         # Convert disclosure date to desired format (e.g., May 19, 2021)
-        disclosure_date = datetime.datetime.strptime(transaction.disclosure_date, '%m/%d/%Y').strftime('%b %d, %Y')
+        disclosure_date = datetime.datetime.strptime(
+            transaction.disclosure_date, "%m/%d/%Y"
+        ).strftime("%b %d, %Y")
         transaction.disclosure_date_formatted = disclosure_date
 
     return [transaction.__dict__ for transaction in transactions]
 
-@app.get('/transactions/senate/senators')
+
+@app.get("/transactions/senate/senators")
 async def get_all_senate_senators(db: Session = Depends(get_db)):
-    query = db.query(AllSenateTransactionModel).filter(
-        AllSenateTransactionModel.ticker != None,
-        AllSenateTransactionModel.ticker.notin_(["--", "N/A"])
-    ).order_by(desc(AllSenateTransactionModel.transaction_date_dt))
+    query = (
+        db.query(AllSenateTransactionModel)
+        .filter(
+            AllSenateTransactionModel.ticker != None,
+            AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
+        )
+        .order_by(desc(AllSenateTransactionModel.transaction_date_dt))
+    )
 
     transactions = await run_in_threadpool(query.all)
 
-    senator_data = defaultdict(lambda: {"bio_id": "", "senator": "", "first_name": "", "last_name": "", "party": "", "transaction_count": 0})
+    senator_data = defaultdict(
+        lambda: {
+            "bio_id": "",
+            "senator": "",
+            "first_name": "",
+            "last_name": "",
+            "party": "",
+            "transaction_count": 0,
+        }
+    )
 
     for transaction in transactions:
         senator = transaction.senator
@@ -799,24 +1075,74 @@ async def get_all_senate_senators(db: Session = Depends(get_db)):
             senator_data[senator]["party"] = transaction.party
             senator_data[senator]["transaction_count"] += 1
 
-    sorted_senators = sorted(senator_data.values(), key=lambda x: x['first_name'])
+    sorted_senators = sorted(senator_data.values(), key=lambda x: x["first_name"])
 
     return sorted_senators
+
 
 def split_senator_name(senator: str):
     names = senator.split()
     first_name = names[0]
     last_name_parts = names[2:] if len(names) > 2 else names[1:]
-    last_name = ' '.join(last_name_parts)
-    last_name = re.sub(r'[,.]', '', last_name)  # Remove comma or period from the last name if present
+    last_name = " ".join(last_name_parts)
+    last_name = re.sub(
+        r"[,.]", "", last_name
+    )  # Remove comma or period from the last name if present
     return first_name, last_name
 
-@app.get('/transactions/senate/search')
-async def get_all_senate_by_senator(page: Optional[int] = None, items_per_page: Optional[int] = None, senator: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(AllSenateTransactionModel).filter(
-        AllSenateTransactionModel.ticker != None,
-        AllSenateTransactionModel.ticker.notin_(["--", "N/A"])
-    ).order_by(desc(AllSenateTransactionModel.transaction_date_dt))
+
+@app.get("/transactions/house/representatives")
+async def get_all_house_representatives(db: Session = Depends(get_db)):
+    query = (
+        db.query(AllHouseTransactionModel)
+        .filter(
+            AllHouseTransactionModel.ticker != None,
+            AllHouseTransactionModel.ticker.notin_(["--", "N/A"]),
+        )
+        .order_by(desc(AllHouseTransactionModel.transaction_date_dt))
+    )
+
+    transactions = await run_in_threadpool(query.all)
+
+    representative_data = defaultdict(
+        lambda: {
+            "bio_id": "",
+            "representative": "",
+            "party": "",
+            "transaction_count": 0,
+        }
+    )
+
+    for transaction in transactions:
+        representative = transaction.representative
+        if representative is not None:
+            representative_data[representative]["bio_id"] = transaction.bio_id
+            representative_data[representative]["representative"] = representative
+            representative_data[representative]["party"] = transaction.party
+            representative_data[representative]["transaction_count"] += 1
+
+    sorted_representatives = sorted(
+        representative_data.values(), key=lambda x: x["representative"]
+    )
+
+    return sorted_representatives
+
+
+@app.get("/transactions/senate/search")
+async def get_all_senate_by_senator(
+    page: Optional[int] = None,
+    items_per_page: Optional[int] = None,
+    senator: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(AllSenateTransactionModel)
+        .filter(
+            AllSenateTransactionModel.ticker != None,
+            AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
+        )
+        .order_by(desc(AllSenateTransactionModel.transaction_date_dt))
+    )
 
     # Apply pagination if provided
     if page is not None and items_per_page is not None:
@@ -825,27 +1151,38 @@ async def get_all_senate_by_senator(page: Optional[int] = None, items_per_page: 
 
     if senator is not None:
         # Split the senator parameter into individual words
-        search_words = re.split(r'\s+', senator.strip())
+        search_words = re.split(r"\s+", senator.strip())
 
         # Apply case-insensitive search for each word
         for word in search_words:
-            query = query.filter(func.lower(AllSenateTransactionModel.senator).contains(func.lower(word)))
+            query = query.filter(
+                func.lower(AllSenateTransactionModel.senator).contains(func.lower(word))
+            )
 
     transactions = await run_in_threadpool(query.all)
 
     for transaction in transactions:
         # Convert transaction date to desired format
-        transaction_date = transaction.transaction_date_dt.strftime('%m/%d/%Y')
+        transaction_date = transaction.transaction_date_dt.strftime("%m/%d/%Y")
         transaction.transaction_date = transaction_date
 
     return [transaction.__dict__ for transaction in transactions]
 
-@app.get('/transactions/senate/all_old')
-async def get_all_house_transactions(page: Optional[int] = None, items_per_page: Optional[int] = None, db: Session = Depends(get_db)):
-    query = db.query(AllSenateTransactionModel).filter(
-        AllSenateTransactionModel.ticker != None, 
-        AllSenateTransactionModel.ticker.notin_(["--", "N/A"])
-    ).order_by(desc(AllSenateTransactionModel.transaction_date_dt))
+
+@app.get("/transactions/senate/all_old")
+async def get_all_house_transactions(
+    page: Optional[int] = None,
+    items_per_page: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(AllSenateTransactionModel)
+        .filter(
+            AllSenateTransactionModel.ticker != None,
+            AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
+        )
+        .order_by(desc(AllSenateTransactionModel.transaction_date_dt))
+    )
 
     # Apply pagination if provided
     if page is not None and items_per_page is not None:
@@ -856,61 +1193,151 @@ async def get_all_house_transactions(page: Optional[int] = None, items_per_page:
 
     for transaction in transactions:
         # Convert transaction date to desired format
-        transaction_date = transaction.transaction_date_dt.strftime('%m/%d/%Y')
+        transaction_date = transaction.transaction_date_dt.strftime("%m/%d/%Y")
         transaction.transaction_date = transaction_date
 
     return [transaction.__dict__ for transaction in transactions]
 
-@app.get('/transactions/house/all')
-async def get_all_house_transactions(page: Optional[int] = None, items_per_page: Optional[int] = None, db: Session = Depends(get_db)):
+
+@app.get("/transactions/house/all")
+async def get_all_house_transactions(
+    bio_id: Optional[str] = None,
+    page: Optional[int] = None,
+    items_per_page: Optional[int] = None,
+    representative: Optional[str] = None,
+    ticker: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(AllHouseTransactionModel)
+        .filter(
+            AllHouseTransactionModel.ticker != None,
+            AllHouseTransactionModel.ticker.notin_(["--", "N/A"]),
+        )
+        .order_by(desc(AllHouseTransactionModel.transaction_date_dt))
+    )
+
+    # Filter by ticker if provided
+    if ticker is not None:
+        query = query.filter(AllHouseTransactionModel.ticker == ticker)
+
+    # Filter by bio_id if provided
+    if bio_id is not None:
+        query = query.filter(AllHouseTransactionModel.bio_id == bio_id)
+
+    # Filter by representative if provided
+    if representative is not None:
+        query = query.filter(AllHouseTransactionModel.representative == representative)
+
+    # Apply pagination if provided
+    if page is not None and items_per_page is not None:
+        offset = page * items_per_page
+        query = query.offset(offset).limit(items_per_page)
+
+    transactions = await run_in_threadpool(query.all)
+
+    for transaction in transactions:
+        # Convert transaction date to desired format
+        transaction_date = transaction.transaction_date_dt.strftime("%m/%d/%Y")
+        transaction.transaction_date = transaction_date
+
+    total_transactions = query.count()  # Get the total number of transactions
+
+    return {
+        "total_transactions": total_transactions,
+        "transactions": [transaction.__dict__ for transaction in transactions],
+    }
+
+
+@app.get("/transactions/house/all/total")
+async def get_total_house_transactions(db: Session = Depends(get_db)):
     query = db.query(AllHouseTransactionModel).filter(
-        AllHouseTransactionModel.ticker != None, 
-        AllHouseTransactionModel.ticker.notin_(["--", "N/A"])
-    ).order_by(desc(AllHouseTransactionModel.transaction_date_dt))
-
-    # Apply pagination if provided
-    if page is not None and items_per_page is not None:
-        offset = page * items_per_page
-        query = query.offset(offset).limit(items_per_page)
-
-    transactions = await run_in_threadpool(query.all)
-
-    for transaction in transactions:
-        # Convert transaction date to desired format
-        transaction_date = transaction.transaction_date_dt.strftime('%m/%d/%Y')
-        transaction.transaction_date = transaction_date
-
-    return [transaction.__dict__ for transaction in transactions]
-
-@app.get('/transactions/senate/{party}/all')
-async def get_all_senate_transactions_by_party(party: str, page: Optional[int] = None, items_per_page: Optional[int] = None, db: Session = Depends(get_db)):
-    query = db.query(AllSenateTransactionModel).filter(
-        AllSenateTransactionModel.ticker != None,
-        AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
-        AllSenateTransactionModel.party == party.capitalize()
-    ).order_by(desc(AllSenateTransactionModel.transaction_date_dt))
-
-    # Apply pagination if provided
-    if page is not None and items_per_page is not None:
-        offset = page * items_per_page
-        query = query.offset(offset).limit(items_per_page)
-
-    transactions = await run_in_threadpool(query.all)
-
-    for transaction in transactions:
-        # Convert transaction date to desired format
-        transaction_date = transaction.transaction_date_dt.strftime('%m/%d/%Y')
-        transaction.transaction_date = transaction_date
-
-    return [transaction.__dict__ for transaction in transactions]
-
-@app.get('/transactions/house/{party}/all')
-async def get_all_house_transactions_by_party(party: str, page: Optional[int] = None, items_per_page: Optional[int] = None, db: Session = Depends(get_db)):
-    query = db.query(AllHouseTransactionModel).filter(
-        AllHouseTransactionModel.ticker != None, 
+        AllHouseTransactionModel.ticker != None,
         AllHouseTransactionModel.ticker.notin_(["--", "N/A"]),
-        AllHouseTransactionModel.party == party.capitalize()
-    ).order_by(desc(AllHouseTransactionModel.transaction_date_dt))
+    )
+
+    total_transactions = query.count()  # Get the total number of transactions
+
+    return {"total_transactions": total_transactions}
+
+
+@app.get("/transactions/house/industry")
+async def get_house_transactions_by_industry(
+    representative: Optional[str] = None, db: Session = Depends(get_db)
+):
+    query = (
+        db.query(AllHouseTransactionModel)
+        .filter(
+            AllHouseTransactionModel.ticker != None,
+            AllHouseTransactionModel.ticker.notin_(["--", "N/A"]),
+        )
+        .order_by(desc(AllHouseTransactionModel.transaction_date_dt))
+    )
+
+    # Filter by representative if provided
+    if representative is not None:
+        query = query.filter(AllHouseTransactionModel.representative == representative)
+
+    transactions = await run_in_threadpool(query.all)
+
+    industry_counts = defaultdict(int)
+
+    for transaction in transactions:
+        industry = transaction.industry
+        if industry:
+            industry_counts[industry] += 1
+
+    return {
+        "total_transactions": len(transactions),
+        "industry_counts": industry_counts,
+    }
+
+
+@app.get("/transactions/house/sector")
+async def get_house_transactions_by_sector(
+    representative: Optional[str] = None, db: Session = Depends(get_db)
+):
+    query = (
+        db.query(AllHouseTransactionModel)
+        .filter(
+            AllHouseTransactionModel.ticker != None,
+            AllHouseTransactionModel.ticker.notin_(["--", "N/A"]),
+        )
+        .order_by(desc(AllHouseTransactionModel.transaction_date_dt))
+    )
+
+    # Filter by representative if provided
+    if representative is not None:
+        query = query.filter(AllHouseTransactionModel.representative == representative)
+
+    transactions = await run_in_threadpool(query.all)
+
+    sector_counts = defaultdict(int)
+
+    for transaction in transactions:
+        sector = transaction.sector
+        if sector:
+            sector_counts[sector] += 1
+
+    return {"total_transactions": len(transactions), "sector_counts": sector_counts}
+
+
+@app.get("/transactions/senate/{party}/all")
+async def get_all_senate_transactions_by_party(
+    party: str,
+    page: Optional[int] = None,
+    items_per_page: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(AllSenateTransactionModel)
+        .filter(
+            AllSenateTransactionModel.ticker != None,
+            AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
+            AllSenateTransactionModel.party == party.capitalize(),
+        )
+        .order_by(desc(AllSenateTransactionModel.transaction_date_dt))
+    )
 
     # Apply pagination if provided
     if page is not None and items_per_page is not None:
@@ -921,12 +1348,45 @@ async def get_all_house_transactions_by_party(party: str, page: Optional[int] = 
 
     for transaction in transactions:
         # Convert transaction date to desired format
-        transaction_date = transaction.transaction_date_dt.strftime('%m/%d/%Y')
+        transaction_date = transaction.transaction_date_dt.strftime("%m/%d/%Y")
         transaction.transaction_date = transaction_date
 
     return [transaction.__dict__ for transaction in transactions]
 
- # @app.get('/transactions/house/all')
+
+@app.get("/transactions/house/{party}/all")
+async def get_all_house_transactions_by_party(
+    party: str,
+    page: Optional[int] = None,
+    items_per_page: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(AllHouseTransactionModel)
+        .filter(
+            AllHouseTransactionModel.ticker != None,
+            AllHouseTransactionModel.ticker.notin_(["--", "N/A"]),
+            AllHouseTransactionModel.party == party.capitalize(),
+        )
+        .order_by(desc(AllHouseTransactionModel.transaction_date_dt))
+    )
+
+    # Apply pagination if provided
+    if page is not None and items_per_page is not None:
+        offset = page * items_per_page
+        query = query.offset(offset).limit(items_per_page)
+
+    transactions = await run_in_threadpool(query.all)
+
+    for transaction in transactions:
+        # Convert transaction date to desired format
+        transaction_date = transaction.transaction_date_dt.strftime("%m/%d/%Y")
+        transaction.transaction_date = transaction_date
+
+    return [transaction.__dict__ for transaction in transactions]
+
+
+# @app.get('/transactions/house/all')
 # async def get_all_house_transactions(page: Optional[int] = None, items_per_page: Optional[int] = None, db: Session = Depends(get_db)):
 #     # generate cache key
 #     cache_key = f"all_house_transactions-{page}-{items_per_page}"
@@ -1003,17 +1463,18 @@ async def get_all_house_transactions_by_party(party: str, page: Optional[int] = 
 
 #     return cache[cache_key]
 
-@app.get('/transactions/senate/ticker/{ticker}')
+
+@app.get("/transactions/senate/ticker/{ticker}")
 async def get_senate_transactions_by_ticker(
-        ticker: str,
-        page: Optional[int] = 0,
-        items_per_page: Optional[int] = 25,
-        db: Session = Depends(get_db)
+    ticker: str,
+    page: Optional[int] = 0,
+    items_per_page: Optional[int] = 25,
+    db: Session = Depends(get_db),
 ):
     query = db.query(AllSenateTransactionModel).filter(
         AllSenateTransactionModel.ticker == ticker.upper(),
         AllSenateTransactionModel.ticker != None,
-        AllSenateTransactionModel.ticker.notin_(["--", "N/A"])
+        AllSenateTransactionModel.ticker.notin_(["--", "N/A"]),
     )
 
     total = await run_in_threadpool(query.count)  # Get total count of transactions
@@ -1029,23 +1490,26 @@ async def get_senate_transactions_by_ticker(
 
     for transaction in transactions:
         # Convert transaction date to desired format
-        transaction_date = transaction.transaction_date_dt.strftime('%m/%d/%Y')
+        transaction_date = transaction.transaction_date_dt.strftime("%m/%d/%Y")
         transaction.transaction_date = transaction_date
 
-    return {"total": total, "transactions": [transaction.__dict__ for transaction in transactions]}
+    return {
+        "total": total,
+        "transactions": [transaction.__dict__ for transaction in transactions],
+    }
 
 
-@app.get('/transactions/house/ticker/{ticker}')
+@app.get("/transactions/house/ticker/{ticker}")
 async def get_house_transactions_by_ticker(
-        ticker: str,
-        page: Optional[int] = 0,
-        items_per_page: Optional[int] = 25,
-        db: Session = Depends(get_db)
+    ticker: str,
+    page: Optional[int] = 0,
+    items_per_page: Optional[int] = 25,
+    db: Session = Depends(get_db),
 ):
     query = db.query(AllHouseTransactionModel).filter(
         AllHouseTransactionModel.ticker == ticker.upper(),
         AllHouseTransactionModel.ticker != None,
-        AllHouseTransactionModel.ticker.notin_(["--", "N/A"])
+        AllHouseTransactionModel.ticker.notin_(["--", "N/A"]),
     )
 
     total = await run_in_threadpool(query.count)  # Get total count of transactions
@@ -1061,17 +1525,19 @@ async def get_house_transactions_by_ticker(
 
     for transaction in transactions:
         # Update transaction date in desired format
-        transaction_date = transaction.transaction_date_dt.strftime('%m/%d/%Y')
+        transaction_date = transaction.transaction_date_dt.strftime("%m/%d/%Y")
         transaction.transaction_date = transaction_date
 
-    return {"total": total, "transactions": [transaction.__dict__ for transaction in transactions]}
+    return {
+        "total": total,
+        "transactions": [transaction.__dict__ for transaction in transactions],
+    }
 
 
-
-@app.get('/transactions/senator/top', response_model=List[dict])
+@app.get("/transactions/senator/top", response_model=List[dict])
 async def get_top_senator_transactions(db: Session = Depends(get_db)):
-    # Calculate the date range for the past 60 days
-    start_date = datetime.datetime.now() - timedelta(days=60)
+    # Calculate the date range for the past 90 days
+    start_date = datetime.datetime.now() - timedelta(days=90)
 
     query = (
         db.query(TopSenatorModel)
@@ -1083,34 +1549,37 @@ async def get_top_senator_transactions(db: Session = Depends(get_db)):
     result = []
     for transaction in transactions:
         transaction_dict = transaction.__dict__
-        transaction_dict['last_updated'] = transaction.last_updated.strftime('%m/%d/%Y %H:%M:%S')
-        senator_name = transaction_dict['senator']
-        
+        transaction_dict["last_updated"] = transaction.last_updated.strftime(
+            "%m/%d/%Y %H:%M:%S"
+        )
+        senator_name = transaction_dict["senator"]
+
         # Retrieve bio_id, party, and state for the senator
         senator_info_query = (
-            db.query(AllSenateTransactionModel.bio_id, AllSenateTransactionModel.party, AllSenateTransactionModel.state)
-            .filter(func.lower(AllSenateTransactionModel.senator) == senator_name.lower())
+            db.query(
+                AllSenateTransactionModel.bio_id,
+                AllSenateTransactionModel.party,
+                AllSenateTransactionModel.state,
+            )
+            .filter(
+                func.lower(AllSenateTransactionModel.senator) == senator_name.lower()
+            )
             .first()
         )
 
         if senator_info_query:
             bio_id, party, state = senator_info_query
-            transaction_dict.update({
-                'bio_id': bio_id,
-                'party': party,
-                'state': state
-            })
+            transaction_dict.update({"bio_id": bio_id, "party": party, "state": state})
 
         result.append(transaction_dict)
 
     return result
 
 
-
-@app.get('/transactions/house/top', response_model=List[dict])
+@app.get("/transactions/house/top", response_model=List[dict])
 async def get_top_house_transactions(db: Session = Depends(get_db)):
-    # Calculate the date range for the past 60 days
-    start_date = datetime.datetime.now() - timedelta(days=60)
+    # Calculate the date range for the past 90 days
+    start_date = datetime.datetime.now() - timedelta(days=90)
 
     query = (
         db.query(TopRepresentativeModel)
@@ -1122,249 +1591,334 @@ async def get_top_house_transactions(db: Session = Depends(get_db)):
     result = []
     for transaction in transactions:
         transaction_dict = transaction.__dict__
-        transaction_dict['last_updated'] = transaction.last_updated.strftime('%m/%d/%Y %H:%M:%S')
+        transaction_dict["last_updated"] = transaction.last_updated.strftime(
+            "%m/%d/%Y %H:%M:%S"
+        )
         result.append(transaction_dict)
 
     return result
 
 
+@app.get("/transactions/senate/tickers/high_count_picks")
+async def get_unique_tickers_with_transaction_count_high_count_picks(
+    db: Session = Depends(get_db),
+):
+    # Calculate the date range for the past 90 days
+    start_date = datetime.datetime.now() - timedelta(days=90)
 
-@app.get('/transactions/senate/tickers/high_count_picks')
-async def get_unique_tickers_with_transaction_count_high_count_picks(db: Session = Depends(get_db)):
-    # Calculate the date range for the past 60 days
-    start_date = datetime.datetime.now() - timedelta(days=60)
-
-    # Query the database to retrieve unique tickers and their transaction counts for the past 60 days, excluding tickers with values "N/A" or "—"
+    # Query the database to retrieve unique tickers and their transaction counts for the past 90 days, excluding tickers with values "N/A" or "—"
     ticker_counts = (
-        db.query(AllSenateTransactionModel.ticker, label('transaction_count', func.count()))
+        db.query(
+            AllSenateTransactionModel.ticker, label("transaction_count", func.count())
+        )
         .filter(
             AllSenateTransactionModel.transaction_date_dt >= start_date,
-            AllSenateTransactionModel.ticker.notin_(["N/A", "—-"])
+            AllSenateTransactionModel.ticker.notin_(["N/A", "—-"]),
         )
         .group_by(AllSenateTransactionModel.ticker)
-        .order_by(desc('transaction_count'))
+        .order_by(desc("transaction_count"))
         .all()
     )
 
     # Create a list of dictionaries containing ticker and transaction count
     tickers = []
     for ticker, count in ticker_counts:
-        matching_ticker = next((item for item in ticker_data if item['symbol'] == ticker), None)
+        matching_ticker = next(
+            (item for item in ticker_data if item["symbol"] == ticker), None
+        )
         if matching_ticker:
-            company_name = matching_ticker['name']
-            current_price_str = matching_ticker['lastsale']
+            company_name = matching_ticker["name"]
+            current_price_str = matching_ticker["lastsale"]
         else:
-            matching_ticker = next((item for item in nasdaq_ticker_data if item['symbol'] == ticker), None)
+            matching_ticker = next(
+                (item for item in nasdaq_ticker_data if item["symbol"] == ticker), None
+            )
             if matching_ticker:
-                company_name = matching_ticker['name']
-                current_price_str = matching_ticker['lastsale']
+                company_name = matching_ticker["name"]
+                current_price_str = matching_ticker["lastsale"]
             else:
                 company_name = None
                 current_price_str = None
         if current_price_str:
-            current_price = float(current_price_str.replace('$', ''))
+            current_price = float(current_price_str.replace("$", ""))
             current_price_int = round(current_price, 2)
         else:
             current_price = None
             current_price_int = None
 
-        tickers.append({"ticker": ticker, "transaction_count": count, "company": company_name, "current_price": current_price, "current_price_int": current_price_int})
+        tickers.append(
+            {
+                "ticker": ticker,
+                "transaction_count": count,
+                "company": company_name,
+                "current_price": current_price,
+                "current_price_int": current_price_int,
+            }
+        )
 
     return {"tickers": tickers}
 
 
+@app.get("/transactions/house/tickers/high_count_picks")
+async def get_unique_tickers_house_with_transaction_count_high_count_picks(
+    db: Session = Depends(get_db),
+):
+    # Calculate the date range for the past 90 days
+    start_date = datetime.datetime.now() - timedelta(days=90)
 
-@app.get('/transactions/house/tickers/high_count_picks')
-async def get_unique_tickers_house_with_transaction_count_high_count_picks(db: Session = Depends(get_db)):
-    # Calculate the date range for the past 60 days
-    start_date = datetime.datetime.now() - timedelta(days=60)
-
-    # Query the database to retrieve unique tickers and their transaction counts for the past 60 days, excluding tickers with values "N/A" or "—"
+    # Query the database to retrieve unique tickers and their transaction counts for the past 90 days, excluding tickers with values "N/A" or "—"
     ticker_counts = (
-        db.query(AllHouseTransactionModel.ticker, label('transaction_count', func.count()))
+        db.query(
+            AllHouseTransactionModel.ticker, label("transaction_count", func.count())
+        )
         .filter(
             AllHouseTransactionModel.transaction_date_dt >= start_date,
-            AllHouseTransactionModel.ticker.notin_(["N/A", "—-"])
+            AllHouseTransactionModel.ticker.notin_(["N/A", "—-"]),
         )
         .group_by(AllSenateTransactionModel.ticker)
-        .order_by(desc('transaction_count'))
+        .order_by(desc("transaction_count"))
         .all()
     )
 
     # Create a list of dictionaries containing ticker and transaction count
     tickers = []
     for ticker, count in ticker_counts:
-        matching_ticker = next((item for item in ticker_data if item['symbol'] == ticker), None)
+        matching_ticker = next(
+            (item for item in ticker_data if item["symbol"] == ticker), None
+        )
         if matching_ticker:
-            company_name = matching_ticker['name']
-            current_price_str = matching_ticker['lastsale']
+            company_name = matching_ticker["name"]
+            current_price_str = matching_ticker["lastsale"]
         else:
-            matching_ticker = next((item for item in nasdaq_ticker_data if item['symbol'] == ticker), None)
+            matching_ticker = next(
+                (item for item in nasdaq_ticker_data if item["symbol"] == ticker), None
+            )
             if matching_ticker:
-                company_name = matching_ticker['name']
-                current_price_str = matching_ticker['lastsale']
+                company_name = matching_ticker["name"]
+                current_price_str = matching_ticker["lastsale"]
             else:
                 company_name = None
                 current_price_str = None
         if current_price_str:
-            current_price = float(current_price_str.replace('$', ''))
+            current_price = float(current_price_str.replace("$", ""))
             current_price_int = round(current_price, 2)
         else:
             current_price = None
             current_price_int = None
 
-        tickers.append({"ticker": ticker, "transaction_count": count, "company": company_name, "current_price": current_price, "current_price_int": current_price_int})
+        tickers.append(
+            {
+                "ticker": ticker,
+                "transaction_count": count,
+                "company": company_name,
+                "current_price": current_price,
+                "current_price_int": current_price_int,
+            }
+        )
 
     return {"tickers": tickers}
 
 
-@app.get('/transactions/senate/tickers/hot_buys')
-async def get_unique_tickers_with_transaction_count_hot_buys_picks(db: Session = Depends(get_db)):
-    # Calculate the date range for the past 60 days
-    start_date = datetime.datetime.now() - timedelta(days=60)
+@app.get("/transactions/senate/tickers/hot_buys")
+async def get_unique_tickers_with_transaction_count_hot_buys_picks(
+    db: Session = Depends(get_db),
+):
+    # Calculate the date range for the past 90 days
+    start_date = datetime.datetime.now() - timedelta(days=90)
 
-    # Query the database to retrieve unique tickers and their transaction counts for the past 60 days, sorted by count
+    # Query the database to retrieve unique tickers and their transaction counts for the past 90 days, sorted by count
     ticker_counts = (
-        db.query(AllSenateTransactionModel.ticker, label('transaction_count', func.count()))
+        db.query(
+            AllSenateTransactionModel.ticker, label("transaction_count", func.count())
+        )
         .filter(AllSenateTransactionModel.transaction_date_dt >= start_date)
-        .filter(AllSenateTransactionModel.transaction_type == 'Purchase')
+        .filter(AllSenateTransactionModel.transaction_type == "Purchase")
         .group_by(AllSenateTransactionModel.ticker)
-        .order_by(desc('transaction_count'))
+        .order_by(desc("transaction_count"))
         .all()
     )
 
     # Create a list of dictionaries containing ticker and transaction count
-    tickers = [{"ticker": ticker, "transaction_count": count} for ticker, count in ticker_counts]
+    tickers = [
+        {"ticker": ticker, "transaction_count": count}
+        for ticker, count in ticker_counts
+    ]
 
     return {"tickers": tickers}
 
 
-@app.get('/transactions/house/tickers/hot_buys')
-async def get_unique_tickers_house_with_transaction_count_hot_buys_picks(db: Session = Depends(get_db)):
-    # Calculate the date range for the past 60 days
-    start_date = datetime.datetime.now() - timedelta(days=60)
+@app.get("/transactions/house/tickers/hot_buys")
+async def get_unique_tickers_house_with_transaction_count_hot_buys_picks(
+    db: Session = Depends(get_db),
+):
+    # Calculate the date range for the past 90 days
+    start_date = datetime.datetime.now() - timedelta(days=90)
 
-    # Query the database to retrieve unique tickers and their transaction counts for the past 60 days, sorted by count
+    # Query the database to retrieve unique tickers and their transaction counts for the past 90 days, sorted by count
     ticker_counts = (
-        db.query(AllHouseTransactionModel.ticker, label('transaction_count', func.count()))
+        db.query(
+            AllHouseTransactionModel.ticker, label("transaction_count", func.count())
+        )
         .filter(
             AllHouseTransactionModel.transaction_date_dt >= start_date,
             AllHouseTransactionModel.ticker != "--",
-            AllHouseTransactionModel.transaction_type == 'Purchase'
+            AllHouseTransactionModel.transaction_type == "Purchase",
         )
         .group_by(AllHouseTransactionModel.ticker)
-        .order_by(desc('transaction_count'))
+        .order_by(desc("transaction_count"))
         .all()
     )
 
     # Create a list of dictionaries containing ticker and transaction count
-    tickers = [{"ticker": ticker, "transaction_count": count} for ticker, count in ticker_counts]
+    tickers = [
+        {"ticker": ticker, "transaction_count": count}
+        for ticker, count in ticker_counts
+    ]
 
     return {"tickers": tickers}
 
 
-@app.get('/transactions/senate/tickers/highest_sold')
+@app.get("/transactions/senate/tickers/highest_sold")
 async def get_unique_tickers_senate_highest_sold(db: Session = Depends(get_db)):
-    # Calculate the date range for the past 60 days
-    start_date = datetime.datetime.now() - timedelta(days=60)
+    # Calculate the date range for the past 90 days
+    start_date = datetime.datetime.now() - timedelta(days=90)
 
-    # Query the database to retrieve unique tickers and their transaction counts for the past 60 days, sorted by count
+    # Query the database to retrieve unique tickers and their transaction counts for the past 90 days, sorted by count
     ticker_counts = (
-        db.query(AllSenateTransactionModel.ticker, label('transaction_count', func.count()))
+        db.query(
+            AllSenateTransactionModel.ticker, label("transaction_count", func.count())
+        )
         .filter(
             AllSenateTransactionModel.transaction_date_dt >= start_date,
-            AllSenateTransactionModel.transaction_type.in_(['Sale (Full)', 'Sale (Partial)'])
+            AllSenateTransactionModel.transaction_type.in_(
+                ["Sale (Full)", "Sale (Partial)"]
+            ),
         )
         .group_by(AllSenateTransactionModel.ticker)
-        .order_by(desc('transaction_count'))
+        .order_by(desc("transaction_count"))
         .all()
     )
 
     # Create a list of dictionaries containing ticker, transaction count, company name, and current price
     tickers = []
     for ticker, count in ticker_counts:
-        matching_ticker = next((item for item in ticker_data if item['symbol'] == ticker), None)
+        matching_ticker = next(
+            (item for item in ticker_data if item["symbol"] == ticker), None
+        )
         if matching_ticker:
-            company_name = matching_ticker['name']
-            current_price_str = matching_ticker['lastsale']
+            company_name = matching_ticker["name"]
+            current_price_str = matching_ticker["lastsale"]
         else:
-            matching_ticker = next((item for item in nasdaq_ticker_data if item['symbol'] == ticker), None)
+            matching_ticker = next(
+                (item for item in nasdaq_ticker_data if item["symbol"] == ticker), None
+            )
             if matching_ticker:
-                company_name = matching_ticker['name']
-                current_price_str = matching_ticker['lastsale']
+                company_name = matching_ticker["name"]
+                current_price_str = matching_ticker["lastsale"]
             else:
                 company_name = None
                 current_price_str = None
         if current_price_str:
-            current_price = float(current_price_str.replace('$', ''))
+            current_price = float(current_price_str.replace("$", ""))
             current_price_int = round(current_price, 2)
         else:
             current_price = None
             current_price_int = None
 
-        tickers.append({"ticker": ticker, "transaction_count": count, "company": company_name, "current_price": current_price, "current_price_int": current_price_int})
+        tickers.append(
+            {
+                "ticker": ticker,
+                "transaction_count": count,
+                "company": company_name,
+                "current_price": current_price,
+                "current_price_int": current_price_int,
+            }
+        )
 
     return {"tickers": tickers}
 
 
-
-@app.get('/transactions/house/tickers/highest_sold')
+@app.get("/transactions/house/tickers/highest_sold")
 async def get_unique_tickers_house_highest_sold(db: Session = Depends(get_db)):
-    # Calculate the date range for the past 60 days
-    start_date = datetime.datetime.now() - timedelta(days=60)
+    # Calculate the date range for the past 90 days
+    start_date = datetime.datetime.now() - timedelta(days=90)
 
-    # Query the database to retrieve unique tickers and their transaction counts for the past 60 days, sorted by count
+    # Query the database to retrieve unique tickers and their transaction counts for the past 90 days, sorted by count
     ticker_counts = (
-        db.query(AllHouseTransactionModel.ticker, label('transaction_count', func.count()))
+        db.query(
+            AllHouseTransactionModel.ticker, label("transaction_count", func.count())
+        )
         .filter(
             AllHouseTransactionModel.transaction_date_dt >= start_date,
-            AllHouseTransactionModel.transaction_type.in_(['Sale (Full)', 'Sale (Partial)'])
+            AllHouseTransactionModel.transaction_type.in_(
+                ["Sale (Full)", "Sale (Partial)"]
+            ),
         )
         .group_by(AllHouseTransactionModel.ticker)
-        .order_by(desc('transaction_count'))
+        .order_by(desc("transaction_count"))
         .all()
     )
 
     # Create a list of dictionaries containing ticker, transaction count, company name, and current price
     tickers = []
     for ticker, count in ticker_counts:
-        matching_ticker = next((item for item in ticker_data if item['symbol'] == ticker), None)
+        matching_ticker = next(
+            (item for item in ticker_data if item["symbol"] == ticker), None
+        )
         if matching_ticker:
-            company_name = matching_ticker['name']
-            current_price_str = matching_ticker['lastsale']
+            company_name = matching_ticker["name"]
+            current_price_str = matching_ticker["lastsale"]
         else:
-            matching_ticker = next((item for item in nasdaq_ticker_data if item['symbol'] == ticker), None)
+            matching_ticker = next(
+                (item for item in nasdaq_ticker_data if item["symbol"] == ticker), None
+            )
             if matching_ticker:
-                company_name = matching_ticker['name']
-                current_price_str = matching_ticker['lastsale']
+                company_name = matching_ticker["name"]
+                current_price_str = matching_ticker["lastsale"]
             else:
                 company_name = None
                 current_price_str = None
         if current_price_str:
-            current_price = float(current_price_str.replace('$', ''))
+            current_price = float(current_price_str.replace("$", ""))
             current_price_int = round(current_price, 2)
         else:
             current_price = None
             current_price_int = None
 
-        tickers.append({"ticker": ticker, "transaction_count": count, "company": company_name, "current_price": current_price, "current_price_int": current_price_int})
+        tickers.append(
+            {
+                "ticker": ticker,
+                "transaction_count": count,
+                "company": company_name,
+                "current_price": current_price,
+                "current_price_int": current_price_int,
+            }
+        )
 
     return {"tickers": tickers}
 
 
-@app.get('/transactions/senate/dashboard/party-breakdown')
+@app.get("/transactions/senate/dashboard/party-breakdown")
 async def get_party_breakdown(db: Session = Depends(get_db)):
-    # Calculate the total number of transactions in the past 60 days
+    # Calculate the total number of transactions in the past 90 days
     total_transactions = (
         db.query(func.count(AllSenateTransactionModel.id))
-        .filter(AllSenateTransactionModel.transaction_date_dt >= datetime.datetime.now() - datetime.timedelta(days=60))
+        .filter(
+            AllSenateTransactionModel.transaction_date_dt
+            >= datetime.datetime.now() - datetime.timedelta(days=90)
+        )
         .scalar()
     )
 
-    # Calculate the number of transactions for each party in the past 60 days
+    # Calculate the number of transactions for each party in the past 90 days
     party_transactions = (
-        db.query(AllSenateTransactionModel.party, func.count(AllSenateTransactionModel.id))
-        .filter(AllSenateTransactionModel.transaction_date_dt >= datetime.datetime.now() - datetime.timedelta(days=60))
+        db.query(
+            AllSenateTransactionModel.party, func.count(AllSenateTransactionModel.id)
+        )
+        .filter(
+            AllSenateTransactionModel.transaction_date_dt
+            >= datetime.datetime.now() - datetime.timedelta(days=90)
+        )
         .group_by(AllSenateTransactionModel.party)
         .all()
     )
@@ -1377,19 +1931,29 @@ async def get_party_breakdown(db: Session = Depends(get_db)):
 
     return {"party_breakdown": party_breakdown}
 
-@app.get('/transactions/senate/dashboard/transaction-type-breakdown')
+
+@app.get("/transactions/senate/dashboard/transaction-type-breakdown")
 async def get_transaction_type_breakdown(db: Session = Depends(get_db)):
-    # Calculate the total number of transactions in the past 60 days
+    # Calculate the total number of transactions in the past 90 days
     total_transactions = (
         db.query(func.count(AllSenateTransactionModel.id))
-        .filter(AllSenateTransactionModel.transaction_date_dt >= datetime.datetime.now() - datetime.timedelta(days=60))
+        .filter(
+            AllSenateTransactionModel.transaction_date_dt
+            >= datetime.datetime.now() - datetime.timedelta(days=90)
+        )
         .scalar()
     )
 
-    # Calculate the number of transactions for each transaction type in the past 60 days
+    # Calculate the number of transactions for each transaction type in the past 90 days
     type_transactions = (
-        db.query(AllSenateTransactionModel.transaction_type, func.count(AllSenateTransactionModel.id))
-        .filter(AllSenateTransactionModel.transaction_date_dt >= datetime.datetime.now() - datetime.timedelta(days=60))
+        db.query(
+            AllSenateTransactionModel.transaction_type,
+            func.count(AllSenateTransactionModel.id),
+        )
+        .filter(
+            AllSenateTransactionModel.transaction_date_dt
+            >= datetime.datetime.now() - datetime.timedelta(days=90)
+        )
         .group_by(AllSenateTransactionModel.transaction_type)
         .all()
     )
@@ -1398,16 +1962,19 @@ async def get_transaction_type_breakdown(db: Session = Depends(get_db)):
     type_breakdown = []
     for transaction_type, count in type_transactions:
         percentage = (count / total_transactions) * 100
-        type_breakdown.append({"transaction_type": transaction_type, "percentage": percentage})
+        type_breakdown.append(
+            {"transaction_type": transaction_type, "percentage": percentage}
+        )
 
     return {"type_breakdown": type_breakdown}
 
-@app.get('/transactions/senate/senator/returns')
+
+@app.get("/transactions/senate/senator/returns")
 async def get_senate_transactions_by_senator_returns(
     senator: str,
     page: Optional[int] = None,
     items_per_page: Optional[int] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     query = db.query(AllSenateTransactionModel).filter_by(senator=senator)
 
@@ -1420,54 +1987,60 @@ async def get_senate_transactions_by_senator_returns(
         transaction_type = transaction.transaction_type
         closing_price = transaction.closing_price
 
-        if transaction_type == 'Purchase':
+        if transaction_type == "Purchase":
             open_positions[ticker] = {
-                'purchase_price': closing_price,
-                'sell_price': None,
-                'partial_sale_amount': 0
+                "purchase_price": closing_price,
+                "sell_price": None,
+                "partial_sale_amount": 0,
             }
-        elif transaction_type == 'Sale (Full)':
+        elif transaction_type == "Sale (Full)":
             if ticker in open_positions:
                 open_position = open_positions.pop(ticker)
-                open_position['sell_price'] = closing_price
+                open_position["sell_price"] = closing_price
                 closed_positions.append(open_position)
-        elif transaction_type == 'Sale (Partial)':
+        elif transaction_type == "Sale (Partial)":
             if ticker in open_positions:
                 open_position = open_positions[ticker]
                 partial_sale_amount = float(transaction.amount)  # Convert to float
-                open_position['partial_sale_amount'] += partial_sale_amount
-                partial_sales.append({
-                    'ticker': ticker,
-                    'purchase_price': open_position['purchase_price'],
-                    'partial_sale_amount': open_position['partial_sale_amount'],
-                    'sell_price': closing_price
-                })
+                open_position["partial_sale_amount"] += partial_sale_amount
+                partial_sales.append(
+                    {
+                        "ticker": ticker,
+                        "purchase_price": open_position["purchase_price"],
+                        "partial_sale_amount": open_position["partial_sale_amount"],
+                        "sell_price": closing_price,
+                    }
+                )
 
     returns = []
 
     for position in closed_positions:
-        purchase_price = position['purchase_price']
-        sell_price = position['sell_price']
+        purchase_price = position["purchase_price"]
+        sell_price = position["sell_price"]
         profit = sell_price - purchase_price
-        returns.append({
-            'ticker': ticker,
-            'purchase_price': purchase_price,
-            'sell_price': sell_price,
-            'profit': profit
-        })
+        returns.append(
+            {
+                "ticker": ticker,
+                "purchase_price": purchase_price,
+                "sell_price": sell_price,
+                "profit": profit,
+            }
+        )
 
     for partial_sale in partial_sales:
-        purchase_price = partial_sale['purchase_price']
-        partial_sale_amount = partial_sale['partial_sale_amount']
-        sell_price = partial_sale['sell_price']
+        purchase_price = partial_sale["purchase_price"]
+        partial_sale_amount = partial_sale["partial_sale_amount"]
+        sell_price = partial_sale["sell_price"]
         profit = sell_price - purchase_price
-        returns.append({
-            'ticker': ticker,
-            'purchase_price': purchase_price,
-            'partial_sale_amount': partial_sale_amount,
-            'sell_price': sell_price,
-            'profit': profit
-        })
+        returns.append(
+            {
+                "ticker": ticker,
+                "purchase_price": purchase_price,
+                "partial_sale_amount": partial_sale_amount,
+                "sell_price": sell_price,
+                "profit": profit,
+            }
+        )
 
     # Apply pagination if provided
     if page is not None and items_per_page is not None:
@@ -1477,6 +2050,64 @@ async def get_senate_transactions_by_senator_returns(
 
     return returns
 
+
+with open("app/senators_bills.json") as f:
+    data = json.load(f)
+
+
+class Bill(BaseModel):
+    congress: str
+    bill_id: str
+    bill_type: str
+    number: str
+    bill_uri: str
+    title: str
+    short_title: str
+    sponsor_title: str
+    sponsor_id: str
+    sponsor_name: str
+    sponsor_state: str
+    sponsor_party: str
+    sponsor_uri: str
+    gpo_pdf_uri: Optional[str] = None
+    congressdotgov_url: str
+    govtrack_url: str
+    introduced_date: str
+    active: bool
+    last_vote: Optional[str] = None
+    house_passage: Optional[str] = None
+    senate_passage: Optional[str] = None
+    enacted: Optional[str] = None
+    vetoed: Optional[str] = None
+    cosponsors: int
+    cosponsors_by_party: dict
+    committees: str
+    primary_subject: str
+    summary: str
+    summary_short: str
+    latest_major_action_date: str
+    latest_major_action: str
+
+
+@app.get("/bills/senate")
+async def read_bills(
+    senator: Optional[str] = None,
+    page: Optional[int] = 1,
+    items_per_page: Optional[int] = 10,
+):
+    if senator:
+        senator_data = next((item for item in data if item["senator"] == senator), None)
+        if senator_data:
+            bills = senator_data["bills"]
+        else:
+            return {"error": "Senator not found"}
+    else:
+        all_bills = [item["bills"] for item in data]
+        bills = [bill for sublist in all_bills for bill in sublist]
+
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    return bills[start:end]
 
 
 # uvicorn app.main:app --reload
