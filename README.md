@@ -27,6 +27,7 @@ The FastAPI Senate Backend is a robust and scalable application designed to trac
 ```py
 git clone https://github.com/haybarcheezy/fastapi-senate-backend.git
 ```
+2. cd fastapi-senate-backend
 ```py
 cd fastapi-senate-backend
 ```
