@@ -11,7 +11,7 @@ The FastAPI Senate Backend is a robust and scalable application designed to trac
 
 ## Tech Stack
 - **Backend**: FastAPI
-- **Database**: [Specify database used, e.g., PostgreSQL, MongoDB]
+- **Database**: sqlite
 - **Deployment**: Linux Debian VM
 
 ## Getting Started
