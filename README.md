@@ -11,6 +11,7 @@ The FastAPI Senate Backend is a robust and scalable application designed to trac
 
 ## Tech Stack
 - **Backend**: FastAPI
+- **Frontend**: Remix [remix-senate](https://github.com/haybarcheezy/remix-senate/)
 - **Database**: sqlite
 - **Deployment**: Linux Debian VM
 
